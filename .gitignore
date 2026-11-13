@@ -1,0 +1,16 @@
+.DS_Store
+.venv/
+.clangd
+.vscode/
+*.tsbuildinfo
+
+# Dashboard
+Dashboard/node_modules/
+Dashboard/.next/
+Dashboard/.env*
+Dashboard/out/
+
+# Arduino build artifacts
+*.bin
+*.elf
+build/

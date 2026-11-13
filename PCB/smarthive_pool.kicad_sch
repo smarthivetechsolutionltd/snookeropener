@@ -1,0 +1,13 @@
+(kicad_sch (version 20231120) (generator kicad-cli)
+  (paper "A4")
+  (title_block
+    (title "Smarthive Pool Controller PCB V2.0 - ESP32 Edition")
+    (date "2026-11-10")
+    (rev "2.0")
+    (company "Smarthivetech Solutions")
+    (comment 1 "Zero-Clash L-PCB: ESP32 DevKit V1 + RC522 RFID (VSPI) + HW-479 RGB LED + Lay-Flat MG996R + 470uF Cap")
+  )
+  (sheet_instances
+    (path "/" (page "1"))
+  )
+)
