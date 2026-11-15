@@ -16,7 +16,7 @@
 #include <WiFiUdp.h>
 #include "web_pages.h"
 
-#define FIRMWARE_VERSION "Smarthive Pool V2.1-Adrenaline"
+#define FIRMWARE_VERSION "Smarthive Pool V2.2-Adrenaline"
 
 // ==================== FORWARD DECLARATIONS ====================
 void initHardwareIdentity();
