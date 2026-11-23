@@ -2243,6 +2243,9 @@ void updateNFC() {
 
 unsigned long servoSweepStartMs = 0;
 bool servoBrownoutDetectedAtBoot = false;
+#define MAX_CLOUD_LOG_BUF 6
+char cloudLogBuf[MAX_CLOUD_LOG_BUF][112];
+int cloudLogCount = 0;
 
 void setServoInFlight(bool active) {
   EEPROM.write(ADDR_SERVO_IN_FLIGHT, active ? SERVO_IN_FLIGHT_VAL : 0x00);
@@ -2250,10 +2253,22 @@ void setServoInFlight(bool active) {
 }
 
 void appendDeviceLog(const char* level, const char* tag, const String& msg) {
-  if (!littleFsReady) return;
   char curDate[11], curTime[9];
   getCurrentDateTime(curDate, sizeof(curDate), curTime, sizeof(curTime));
-  String line = "[" + String(curDate) + " " + String(curTime) + "] [B#" + String(bootCount) + "] [" + String(level) + "] [" + String(tag) + "] " + msg + "\n";
+  String lineNoNl = "[" + String(curDate) + " " + String(curTime) + "] [B#" + String(bootCount) + "] [" + String(level) + "] [" + String(tag) + "] " + msg;
+  // Queue compact copy for remote Adrenaline Cloud Diagnostics stream
+  if (cloudLogCount >= MAX_CLOUD_LOG_BUF) {
+    for (int i = 0; i < MAX_CLOUD_LOG_BUF - 1; i++) {
+      memcpy(cloudLogBuf[i], cloudLogBuf[i + 1], sizeof(cloudLogBuf[i]));
+    }
+    cloudLogCount = MAX_CLOUD_LOG_BUF - 1;
+  }
+  strncpy(cloudLogBuf[cloudLogCount], lineNoNl.c_str(), sizeof(cloudLogBuf[cloudLogCount]) - 1);
+  cloudLogBuf[cloudLogCount][sizeof(cloudLogBuf[cloudLogCount]) - 1] = '\0';
+  cloudLogCount++;
+
+  if (!littleFsReady) return;
+  String line = lineNoNl + "\n";
 
   // Auto-rotate log file if it exceeds 8 KB (keep latest ~5 KB)
   if (LittleFS.exists("/device_log.txt")) {
@@ -2726,12 +2741,22 @@ void flushOfflineQueue() {
     payload += "\"reset_reason\":\"" + escapeJson(ESP.getResetReason()) + "\",";
     payload += "\"rc522_ok\":" + String((rc522FirmwareVersion != 0x00 && rc522FirmwareVersion != 0xFF) ? "true" : "false") + ",";
     payload += "\"offline_queue_count\":" + String(offlineQueueCount) + ",";
-    payload += "\"boot_count\":" + String(bootCount) + "}";
+    payload += "\"boot_count\":" + String(bootCount);
+    if (cloudLogCount > 0) {
+      payload += ",\"device_logs\":[";
+      for (int i = 0; i < cloudLogCount; i++) {
+        if (i > 0) payload += ",";
+        payload += "\"" + escapeJson(String(cloudLogBuf[i])) + "\"";
+      }
+      payload += "]";
+    }
+    payload += "}";
 
     int code = http.POST(payload);
     lastCloudHttpCode = code;
     if (code >= 200 && code < 300) {
       lastCloudStatus = "OK";
+      cloudLogCount = 0;
       Serial.printf_P(PSTR("[OFFLINE-QUEUE] Batch sync accepted by cloud (%d/%d games recovered)\n"), batchLimit, offlineQueueCount);
       int remaining = offlineQueueCount - batchLimit;
       for (int i = 0; i < remaining; i++) {
@@ -2830,12 +2855,21 @@ void sendCloudEvent(const char* eventType, const char* cardUid) {
     payload += "\"rc522_ok\":" + String((rc522FirmwareVersion != 0x00 && rc522FirmwareVersion != 0xFF) ? "true" : "false") + ",";
     payload += "\"offline_queue_count\":" + String(offlineQueueCount) + ",";
     payload += "\"boot_count\":" + String(bootCount);
+    if (cloudLogCount > 0) {
+      payload += ",\"device_logs\":[";
+      for (int i = 0; i < cloudLogCount; i++) {
+        if (i > 0) payload += ",";
+        payload += "\"" + escapeJson(String(cloudLogBuf[i])) + "\"";
+      }
+      payload += "]";
+    }
     payload += "}";
 
     int httpCode = http.POST(payload);
     lastCloudHttpCode = httpCode;
     if (httpCode >= 200 && httpCode < 300) {
       lastCloudStatus = "OK";
+      cloudLogCount = 0;
       Serial.printf_P(PSTR("[CLOUD] Event '%s' accepted by Cloud (HTTP %d)\n"), eventType, httpCode);
       if (strcmp(eventType, "button_press") == 0 || strcmp(eventType, "rack_unlock") == 0) {
         adrenalineSyncPending = false;
