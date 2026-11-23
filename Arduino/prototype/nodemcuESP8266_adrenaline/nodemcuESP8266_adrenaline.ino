@@ -16,7 +16,7 @@
 #include <WiFiUdp.h>
 #include "web_pages.h"
 
-#define FIRMWARE_VERSION "Smarthive Pool V2.2-Adrenaline"
+#define FIRMWARE_VERSION "Smarthive Pool V2.2-Adrenaleine"
 
 // ==================== FORWARD DECLARATIONS ====================
 void initHardwareIdentity();
@@ -61,6 +61,14 @@ void updateNFC();
 bool isCardPresent();
 void updateServo();
 void triggerServoDoorLock();
+void loadServoAngles();
+void saveServoAngles();
+void handleServoConfig();
+void setServoInFlight(bool active);
+void appendDeviceLog(const char* level, const char* tag, const String& msg);
+void checkServoBrownoutOnBoot();
+void handleDeviceLogs();
+void handleDeviceLogsClear();
 void sendCloudEvent(const char* eventType, const char* cardUid = "");
 void handleCounterReset();
 void handleKeepAlive();
@@ -94,6 +102,14 @@ void saveAuthorizedCards();
 #define INIT_FLAG         0xB1 // Migration flag for expanded credential schema
 #define ADDR_KEEPALIVE    470  // 1 byte (1 = enabled, 0 = disabled)
 #define ADDR_DEVICE_ID    472  // 32 bytes (Adrenaline cloud table binding, e.g. "snooker_table_1")
+
+// Persisted Servo Calibration Angles (510..512) - Survives reboots
+#define ADDR_SERVO_FLAG   510 // 1 byte
+#define SERVO_FLAG_VAL    0x5A
+#define ADDR_SERVO_START  511 // 1 byte uint8_t (0..180, starting/locked angle)
+#define ADDR_SERVO_END    512 // 1 byte uint8_t (0..180, ending/unlocked angle)
+#define ADDR_SERVO_IN_FLIGHT 513 // 1 byte (0xA5 while servo sweep active; detects mid-sweep brownout/reboot)
+#define SERVO_IN_FLIGHT_VAL  0xA5
 
 // Multi-WiFi Memory Block (710..1105) - Remembers previously connected networks
 #define ADDR_SAVED_WIFI_FLAG  710 // 1 byte
@@ -251,9 +267,12 @@ const unsigned long NFC_COOLDOWN_MS = 800; // 0.8s responsive cooldown between c
 //            to buffer the 1.5A - 2.5A peak inrush current and prevent ESP brownout.
 // -------------------------------------------------------------------------
 #define SERVO_PIN            D8   // GPIO 15
-#define SERVO_LOCKED_ANGLE   180  // Full 180 deg travel for ball gate release
-#define SERVO_UNLOCKED_ANGLE 0    // Full open angle (0 deg)
+#define SERVO_LOCKED_ANGLE   180  // Default starting/locked angle (configurable via Web UI)
+#define SERVO_UNLOCKED_ANGLE 0    // Default ending/unlocked angle (configurable via Web UI)
 #define UNLOCK_HOLD_MS       3000 // How long to stay open (milliseconds)
+
+int servoStartAngle = SERVO_LOCKED_ANGLE;
+int servoEndAngle   = SERVO_UNLOCKED_ANGLE;
 
 Servo lockServo;
 bool servoUnlocked = false;
@@ -606,6 +625,7 @@ void updateWiFiReconnect() {
     wifiScanActive = false;
     Serial.printf_P(PSTR("\n[WIFI] Connected to '%s'! IP: %s (RSSI: %d dBm) [Zero Reboots]\n"),
                   WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    appendDeviceLog("INFO", "WIFI", "Connected " + WiFi.SSID() + " IP=" + WiFi.localIP().toString() + " RSSI=" + String(WiFi.RSSI()) + "dBm");
     lastCloudSyncAttempt = millis() - 3000; // Wait ~2s for DHCP/ARP/DNS to settle before TLS sync
 
     // Sync active SSID with primary configuration
@@ -628,6 +648,7 @@ void updateWiFiReconnect() {
   if (!currentlyConnected && lastWiFiConnectedStatus) {
     lastWiFiConnectedStatus = false;
     Serial.println(F("\n[WIFI] Connection dropped! Auto-reconnecting without reboot..."));
+    appendDeviceLog("WARN", "WIFI", "Connection dropped; auto-reconnecting");
     if (strlen(routerSSID) > 0) {
       WiFi.disconnect(false, false); // Keep SoftAP alive
       WiFi.begin(routerSSID, routerPassword);
@@ -705,6 +726,74 @@ void updateWiFiReconnect() {
 }
 
 // ==================== AUTH GUARD ====================
+// ==================== AUTH GUARD (SESSION COOKIE + LOGIN PAGE) ====================
+#define MAX_AUTH_SESSIONS 4
+#define SESSION_TTL_MS    (12UL * 3600UL * 1000UL) // 12-hour session expiry
+
+struct AuthSession {
+  char token[17]; // 16 hex chars + null
+  unsigned long lastSeen;
+};
+
+AuthSession authSessions[MAX_AUTH_SESSIONS];
+
+void invalidateAllSessions() {
+  for (int i = 0; i < MAX_AUTH_SESSIONS; i++) {
+    authSessions[i].token[0] = '\0';
+    authSessions[i].lastSeen = 0;
+  }
+}
+
+String createAuthSession() {
+  int slot = 0;
+  unsigned long oldest = 0xFFFFFFFFUL;
+  for (int i = 0; i < MAX_AUTH_SESSIONS; i++) {
+    if (authSessions[i].token[0] == '\0') {
+      slot = i;
+      break;
+    }
+    if (authSessions[i].lastSeen < oldest) {
+      oldest = authSessions[i].lastSeen;
+      slot = i;
+    }
+  }
+  uint32_t r1 = RANDOM_REG32;
+  uint32_t r2 = RANDOM_REG32 ^ (uint32_t)micros();
+  snprintf(authSessions[slot].token, sizeof(authSessions[slot].token), "%08x%08x", r1, r2);
+  authSessions[slot].lastSeen = millis();
+  return String(authSessions[slot].token);
+}
+
+String extractSessionToken() {
+  if (!server.hasHeader("Cookie")) return "";
+  String cookie = server.header("Cookie");
+  int idx = cookie.indexOf("SMP_SESSION=");
+  if (idx < 0) return "";
+  int start = idx + 12;
+  int end = cookie.indexOf(';', start);
+  String tok = (end < 0) ? cookie.substring(start) : cookie.substring(start, end);
+  tok.trim();
+  return tok;
+}
+
+bool isSessionValid() {
+  String tok = extractSessionToken();
+  if (tok.length() != 16) return false;
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_AUTH_SESSIONS; i++) {
+    if (authSessions[i].token[0] != '\0' && tok.equals(authSessions[i].token)) {
+      if (now - authSessions[i].lastSeen < SESSION_TTL_MS) {
+        authSessions[i].lastSeen = now;
+        return true;
+      } else {
+        authSessions[i].token[0] = '\0';
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
 bool isSoftAPClient() {
   IPAddress clientIP = server.client().remoteIP();
   IPAddress apIP = WiFi.softAPIP();
@@ -713,17 +802,61 @@ bool isSoftAPClient() {
 }
 
 bool requireAuth() {
-  // If the client is connected directly to the hardware's WPA2-protected Access Point (192.168.4.x),
-  // allow access so mobile captive portals (Android CaptivePortalLogin & iOS CNA) can display the dashboard
-  // without failing on HTTP 401 Basic Auth prompts (which break mobile captive network detection).
-  if (isSoftAPClient()) {
+  if (isSessionValid()) {
     return true;
   }
-  if (!server.authenticate(guiUsername, guiPassword)) {
-    server.requestAuthentication(BASIC_AUTH, "Adrenaline_Snooker_Hub", "Authentication Required");
-    return false;
+  // Allow HTTP Basic Auth fallback for API/automation clients (e.g. curl / Apple Shortcuts)
+  if (server.hasHeader("Authorization") && server.authenticate(guiUsername, guiPassword)) {
+    return true;
   }
-  return true;
+  if (server.uri().startsWith("/api/")) {
+    server.send(401, "application/json", "{\"error\":\"unauthorized\",\"message\":\"Login required\"}");
+  } else {
+    server.sendHeader("Location", "/login", true);
+    server.send(302, "text/plain", "");
+  }
+  return false;
+}
+
+void handleLoginPage() {
+  if (isSessionValid()) {
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
+    return;
+  }
+  server.send_P(200, "text/html", PAGE_LOGIN);
+}
+
+void handleLoginPost() {
+  String user = server.arg("username");
+  String pass = server.arg("password");
+  user.trim();
+  if (user.equals(guiUsername) && pass.equals(guiPassword)) {
+    String tok = createAuthSession();
+    server.sendHeader("Set-Cookie", "SMP_SESSION=" + tok + "; Path=/; HttpOnly; SameSite=Lax");
+    server.send(200, "application/json", "{\"ok\":true}");
+    Serial.printf_P(PSTR("[AUTH] Admin '%s' signed in from %s\n"), user.c_str(), server.client().remoteIP().toString().c_str());
+  } else {
+    Serial.printf_P(PSTR("[AUTH] Failed login attempt for '%s' from %s\n"), user.c_str(), server.client().remoteIP().toString().c_str());
+    server.send(401, "application/json", "{\"ok\":false,\"message\":\"Invalid username or password.\"}");
+  }
+}
+
+void handleLogout() {
+  String tok = extractSessionToken();
+  for (int i = 0; i < MAX_AUTH_SESSIONS; i++) {
+    if (tok.length() == 16 && tok.equals(authSessions[i].token)) {
+      authSessions[i].token[0] = '\0';
+      authSessions[i].lastSeen = 0;
+    }
+  }
+  server.sendHeader("Set-Cookie", "SMP_SESSION=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+  if (server.uri().startsWith("/api/")) {
+    server.send(200, "application/json", "{\"ok\":true}");
+  } else {
+    server.sendHeader("Location", "/login", true);
+    server.send(302, "text/plain", "");
+  }
 }
 
 // ==================== HARDWARE RGB LED STATUS FEEDBACK ====================
@@ -854,6 +987,8 @@ void handleAPI() {
   json += "\"rc522_version\":\"0x" + String(rc522FirmwareVersion, HEX) + "\",";
   json += "\"rc522_connected\":" + String((rc522FirmwareVersion != 0x00 && rc522FirmwareVersion != 0xFF) ? "true" : "false") + ",";
   json += "\"servo_state\":\"" + String(servoUnlocked ? "UNLOCKED" : "LOCKED") + "\",";
+  json += "\"servo_start_angle\":" + String(servoStartAngle) + ",";
+  json += "\"servo_end_angle\":" + String(servoEndAngle) + ",";
   json += "\"keepalive_enabled\":" + String(keepAliveEnabled ? "true" : "false");
   json += "}";
 
@@ -2034,6 +2169,7 @@ void updateNFC() {
       delay(70);
     }
 
+    appendDeviceLog("WARN", "RFID", "DENIED " + cardUid);
     queueOfflineEvent("unauthorized_card_attempt", cardUid.c_str());
     return; // Completely stop: door lock remains CLOSED, count does NOT increment!
   }
@@ -2077,6 +2213,7 @@ void updateNFC() {
   sessionRackCount++;
   saveRackCounter();
   recordRackCount();
+  appendDeviceLog("INFO", "RFID", "GRANTED " + cardUid + " (" + cardStaffName + ") RSSI=" + String(WiFi.RSSI()) + "dBm");
   queueOfflineEvent("button_press", cardUid.c_str());
 
   Serial.printf_P(PSTR("[SNOOKER] Authorized Card Unlocked! Session total: %lu (Queued for sync: %d)\n"),
@@ -2104,17 +2241,155 @@ void updateNFC() {
 #define SERVO_STEP_DEG         4   // Degrees per step
 #define SERVO_STEP_INTERVAL_MS 12  // Milliseconds between steps (~350ms total travel)
 
+unsigned long servoSweepStartMs = 0;
+bool servoBrownoutDetectedAtBoot = false;
+
+void setServoInFlight(bool active) {
+  EEPROM.write(ADDR_SERVO_IN_FLIGHT, active ? SERVO_IN_FLIGHT_VAL : 0x00);
+  EEPROM.commit();
+}
+
+void appendDeviceLog(const char* level, const char* tag, const String& msg) {
+  if (!littleFsReady) return;
+  char curDate[11], curTime[9];
+  getCurrentDateTime(curDate, sizeof(curDate), curTime, sizeof(curTime));
+  String line = "[" + String(curDate) + " " + String(curTime) + "] [B#" + String(bootCount) + "] [" + String(level) + "] [" + String(tag) + "] " + msg + "\n";
+
+  // Auto-rotate log file if it exceeds 8 KB (keep latest ~5 KB)
+  if (LittleFS.exists("/device_log.txt")) {
+    File rf = LittleFS.open("/device_log.txt", "r");
+    if (rf && rf.size() > 8192) {
+      size_t skip = rf.size() - 5120;
+      rf.seek(skip);
+      rf.readStringUntil('\n'); // Align to next full line
+      String tail = rf.readString();
+      rf.close();
+      File wf = LittleFS.open("/device_log.txt", "w");
+      if (wf) {
+        wf.print(tail);
+        wf.close();
+      }
+    } else if (rf) {
+      rf.close();
+    }
+  }
+
+  File f = LittleFS.open("/device_log.txt", "a");
+  if (f) {
+    f.print(line);
+    f.close();
+  }
+}
+
+void checkServoBrownoutOnBoot() {
+  String reason = ESP.getResetReason();
+  bool rcOk = (rc522FirmwareVersion != 0x00 && rc522FirmwareVersion != 0xFF);
+  appendDeviceLog("BOOT", "SYS", "Reason=" + reason + " Heap=" + String(ESP.getFreeHeap()) + "B RC522=" + (rcOk ? "OK" : "FAIL") + " Angles=" + String(servoStartAngle) + "->" + String(servoEndAngle));
+
+  if (EEPROM.read(ADDR_SERVO_IN_FLIGHT) == SERVO_IN_FLIGHT_VAL) {
+    servoBrownoutDetectedAtBoot = true;
+    setServoInFlight(false);
+    appendDeviceLog("CRIT", "SERVO_ABORT", "Previous unlock interrupted mid-sweep by reboot/brownout! ResetReason=" + reason);
+    Serial.println("[CRIT] Previous servo unlock was interrupted by a reboot/brownout!");
+    queueOfflineEvent("servo_brownout_alert", "");
+  }
+}
+
+void handleDeviceLogs() {
+  if (!littleFsReady || !LittleFS.exists("/device_log.txt")) {
+    server.send(200, "text/plain", "(No diagnostic logs recorded yet)\n");
+    return;
+  }
+  File f = LittleFS.open("/device_log.txt", "r");
+  if (!f) {
+    server.send(500, "text/plain", "Failed to open log file\n");
+    return;
+  }
+  server.streamFile(f, "text/plain");
+  f.close();
+}
+
+void handleDeviceLogsClear() {
+  if (littleFsReady && LittleFS.exists("/device_log.txt")) {
+    LittleFS.remove("/device_log.txt");
+  }
+  appendDeviceLog("INFO", "SYS", "Logs cleared by admin");
+  server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void loadServoAngles() {
+  byte flag = EEPROM.read(ADDR_SERVO_FLAG);
+  if (flag == SERVO_FLAG_VAL) {
+    uint8_t s = EEPROM.read(ADDR_SERVO_START);
+    uint8_t e = EEPROM.read(ADDR_SERVO_END);
+    servoStartAngle = constrain((int)s, 0, 180);
+    servoEndAngle   = constrain((int)e, 0, 180);
+    Serial.printf_P(PSTR("[SERVO] Loaded saved angles from EEPROM: Start(Locked)=%d deg, End(Unlocked)=%d deg\n"),
+                    servoStartAngle, servoEndAngle);
+  } else {
+    servoStartAngle = SERVO_LOCKED_ANGLE;
+    servoEndAngle   = SERVO_UNLOCKED_ANGLE;
+    Serial.printf_P(PSTR("[SERVO] Using default angles: Start(Locked)=%d deg, End(Unlocked)=%d deg\n"),
+                    servoStartAngle, servoEndAngle);
+  }
+}
+
+void saveServoAngles() {
+  servoStartAngle = constrain(servoStartAngle, 0, 180);
+  servoEndAngle   = constrain(servoEndAngle, 0, 180);
+  EEPROM.write(ADDR_SERVO_FLAG, SERVO_FLAG_VAL);
+  EEPROM.write(ADDR_SERVO_START, (uint8_t)servoStartAngle);
+  EEPROM.write(ADDR_SERVO_END, (uint8_t)servoEndAngle);
+  EEPROM.commit();
+  Serial.printf_P(PSTR("[SERVO] Saved angles to EEPROM: Start(Locked)=%d deg, End(Unlocked)=%d deg\n"),
+                  servoStartAngle, servoEndAngle);
+}
+
+void handleServoConfig() {
+  if (!server.hasArg("start") || !server.hasArg("end")) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Missing start or end angle\"}");
+    return;
+  }
+  int newStart = server.arg("start").toInt();
+  int newEnd   = server.arg("end").toInt();
+  if (newStart < 0 || newStart > 180 || newEnd < 0 || newEnd > 180) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Angles must be between 0 and 180\"}");
+    return;
+  }
+
+  servoStartAngle = newStart;
+  servoEndAngle   = newEnd;
+  saveServoAngles();
+
+  // Gently reposition to the new starting (locked) angle if currently idle
+  if (servoState == SERVO_IDLE_DETACHED) {
+    lockServo.attach(SERVO_PIN);
+    currentServoAngle = servoStartAngle;
+    lockServo.write(currentServoAngle);
+    servoDetached = false;
+    servoState = SERVO_SETTLING_CLOSE;
+    servoCloseSettleStartTime = millis();
+  }
+
+  String resp = "{\"status\":\"ok\",\"servo_start_angle\":" + String(servoStartAngle) +
+                ",\"servo_end_angle\":" + String(servoEndAngle) + "}";
+  server.send(200, "application/json", resp);
+}
+
 void triggerServoDoorLock() {
   if (servoState == SERVO_IDLE_DETACHED) {
     lockServo.attach(SERVO_PIN);
-    currentServoAngle = SERVO_LOCKED_ANGLE;
+    currentServoAngle = servoStartAngle;
     lockServo.write(currentServoAngle);
     servoDetached = false;
   }
   servoState = SERVO_SWEEPING_OPEN;
   servoUnlocked = true;
   lastServoStepTime = millis();
-  Serial.printf_P(PSTR("[SERVO] Smooth soft-start: sweeping from %d deg to %d deg (Door Unlocking)\n"), currentServoAngle, SERVO_UNLOCKED_ANGLE);
+  servoSweepStartMs = lastServoStepTime;
+  setServoInFlight(true);
+  appendDeviceLog("INFO", "SERVO", "Start sweep " + String(currentServoAngle) + "->" + String(servoEndAngle) + " deg Heap=" + String(ESP.getFreeHeap()) + "B");
+  Serial.printf_P(PSTR("[SERVO] Smooth soft-start: sweeping from %d deg to %d deg (Door Unlocking)\n"), currentServoAngle, servoEndAngle);
 }
 
 void updateServo() {
@@ -2128,14 +2403,20 @@ void updateServo() {
     case SERVO_SWEEPING_OPEN:
       if (now - lastServoStepTime >= SERVO_STEP_INTERVAL_MS) {
         lastServoStepTime = now;
-        if (currentServoAngle > SERVO_UNLOCKED_ANGLE) {
-          currentServoAngle -= SERVO_STEP_DEG;
-          if (currentServoAngle < SERVO_UNLOCKED_ANGLE) currentServoAngle = SERVO_UNLOCKED_ANGLE;
+        if (currentServoAngle != servoEndAngle) {
+          if (currentServoAngle > servoEndAngle) {
+            currentServoAngle -= SERVO_STEP_DEG;
+            if (currentServoAngle < servoEndAngle) currentServoAngle = servoEndAngle;
+          } else {
+            currentServoAngle += SERVO_STEP_DEG;
+            if (currentServoAngle > servoEndAngle) currentServoAngle = servoEndAngle;
+          }
           lockServo.write(currentServoAngle);
         } else {
           // Reached full open
           servoState = SERVO_HOLDING_OPEN;
           servoHoldStartTime = now;
+          appendDeviceLog("INFO", "SERVO", "Reached open (" + String(currentServoAngle) + " deg) in " + String(now - servoSweepStartMs) + "ms");
           Serial.printf_P(PSTR("[SERVO] Full open reached (%d deg). Holding for %ds\n"), currentServoAngle, UNLOCK_HOLD_MS / 1000);
         }
       }
@@ -2146,16 +2427,21 @@ void updateServo() {
         servoState = SERVO_SWEEPING_CLOSE;
         servoUnlocked = false;
         lastServoStepTime = now;
-        Serial.printf_P(PSTR("[SERVO] Unlock hold expired. Smooth sweeping back to locked (%d deg)\n"), SERVO_LOCKED_ANGLE);
+        Serial.printf_P(PSTR("[SERVO] Unlock hold expired. Smooth sweeping back to locked (%d deg)\n"), servoStartAngle);
       }
       break;
 
     case SERVO_SWEEPING_CLOSE:
       if (now - lastServoStepTime >= SERVO_STEP_INTERVAL_MS) {
         lastServoStepTime = now;
-        if (currentServoAngle < SERVO_LOCKED_ANGLE) {
-          currentServoAngle += SERVO_STEP_DEG;
-          if (currentServoAngle > SERVO_LOCKED_ANGLE) currentServoAngle = SERVO_LOCKED_ANGLE;
+        if (currentServoAngle != servoStartAngle) {
+          if (currentServoAngle < servoStartAngle) {
+            currentServoAngle += SERVO_STEP_DEG;
+            if (currentServoAngle > servoStartAngle) currentServoAngle = servoStartAngle;
+          } else {
+            currentServoAngle -= SERVO_STEP_DEG;
+            if (currentServoAngle < servoStartAngle) currentServoAngle = servoStartAngle;
+          }
           lockServo.write(currentServoAngle);
         } else {
           // Reached full lock
@@ -2171,6 +2457,8 @@ void updateServo() {
         lockServo.detach();
         servoDetached = true;
         servoState = SERVO_IDLE_DETACHED;
+        setServoInFlight(false);
+        appendDeviceLog("INFO", "SERVO", "Cycle done & detached (" + String(now - servoSweepStartMs) + "ms) Heap=" + String(ESP.getFreeHeap()) + "B");
         Serial.println(F("[SERVO] Motor detached at locked position (0mA idle current, brownout safe)"));
       }
       break;
@@ -2458,6 +2746,7 @@ void flushOfflineQueue() {
       processCloudSyncResponse(response);
     } else {
       lastCloudStatus = "ERR_" + String(code);
+      appendDeviceLog("ERR", "CLOUD", "Batch flush HTTP " + String(code) + " (" + http.errorToString(code) + ") Q=" + String(offlineQueueCount) + " Heap=" + String(ESP.getFreeHeap()) + "B");
       Serial.printf_P(PSTR("[OFFLINE-QUEUE] Batch flush failed (HTTP %d: %s). Will retry.\n"), code, http.errorToString(code).c_str());
     }
     http.end();
@@ -2556,6 +2845,7 @@ void sendCloudEvent(const char* eventType, const char* cardUid) {
       processCloudSyncResponse(response);
     } else {
       lastCloudStatus = "ERR_" + String(httpCode);
+      appendDeviceLog("ERR", "CLOUD", String(eventType) + " HTTP " + String(httpCode) + " (" + http.errorToString(httpCode) + ") Heap=" + String(ESP.getFreeHeap()) + "B");
       Serial.printf_P(PSTR("[CLOUD] Event failed (HTTP %d): %s\n"), httpCode, http.errorToString(httpCode).c_str());
       String errBody = http.getString();
       if (errBody.length() > 0) {
@@ -2617,17 +2907,20 @@ void setup() {
     Serial.println(F(" (Custom/Unknown Version)"));
   }
 
-  // 2. Initialize MG996R Servo on D8 (Set locked angle gently then detach to eliminate power drain)
+  // Load EEPROM credentials & saved servo angles before positioning servo
+  loadCredentials();
+  loadServoAngles();
+
+  // 2. Initialize MG996R Servo on D8 (Set saved starting/locked angle gently then detach to eliminate power drain)
   lockServo.attach(SERVO_PIN);
-  lockServo.write(SERVO_LOCKED_ANGLE);
+  lockServo.write(servoStartAngle);
   delay(500);
   lockServo.detach();
   servoDetached = true;
   servoState = SERVO_IDLE_DETACHED;
-  currentServoAngle = SERVO_LOCKED_ANGLE;
-  Serial.printf_P(PSTR("[SERVO] Initialized on Pin %s - Locked at %d deg & Detached (0mA idle current)\n"), "D8 (GPIO 15)", SERVO_LOCKED_ANGLE);
+  currentServoAngle = servoStartAngle;
+  Serial.printf_P(PSTR("[SERVO] Initialized on Pin %s - Locked at %d deg (End=%d deg) & Detached (0mA idle current)\n"), "D8 (GPIO 15)", servoStartAngle, servoEndAngle);
 
-  loadCredentials();
   loadBootCount();
   littleFsReady = LittleFS.begin();
   Serial.printf_P(PSTR("[FS] LittleFS mount: %s\n"), littleFsReady ? "OK" : "Unavailable (using EEPROM fallback)");
@@ -2636,6 +2929,7 @@ void setup() {
   loadOfflineQueue();
   loadAuthorizedCards();
   loadBlockedCards();
+  checkServoBrownoutOnBoot();
   configTime(3600, 0, "pool.ntp.org", "time.google.com"); // UTC+1 (WAT / Africa/Lagos)
 
   WiFi.mode(WIFI_AP_STA);
@@ -2813,6 +3107,22 @@ void setup() {
     triggerServoDoorLock();
     server.send(200, "application/json", "{\"status\":\"ok\",\"servo\":\"unlocked\"}");
   });
+  server.on("/api/servo/config", HTTP_POST, []() {
+    if (!requireAuth()) return;
+    handleServoConfig();
+  });
+  server.on("/api/servo/config", HTTP_GET, []() {
+    if (!requireAuth()) return;
+    handleServoConfig();
+  });
+  server.on("/api/logs", HTTP_GET, []() {
+    if (!requireAuth()) return;
+    handleDeviceLogs();
+  });
+  server.on("/api/logs/clear", HTTP_POST, []() {
+    if (!requireAuth()) return;
+    handleDeviceLogsClear();
+  });
   server.on("/api/keepalive", HTTP_POST, []() {
     if (!requireAuth()) return;
     handleKeepAlive();
@@ -2821,6 +3131,12 @@ void setup() {
     if (!requireAuth()) return;
     handleKeepAlive();
   });
+
+  // Login / Logout routes (public)
+  server.on("/login", HTTP_GET, handleLoginPage);
+  server.on("/api/login", HTTP_POST, handleLoginPost);
+  server.on("/logout", HTTP_GET, handleLogout);
+  server.on("/api/logout", HTTP_POST, handleLogout);
 
   // OS Captive portal detection endpoints
   server.on("/generate_204", HTTP_GET, []() {
@@ -2847,6 +3163,8 @@ void setup() {
   });
 
   server.onNotFound(handleNotFound);
+
+  server.collectHeaders("Cookie"); // Authorization is collected automatically on ESP8266 Core 3.x
 
   server.begin();
   Serial.println(F("[HTTP] Web server started on port 80"));

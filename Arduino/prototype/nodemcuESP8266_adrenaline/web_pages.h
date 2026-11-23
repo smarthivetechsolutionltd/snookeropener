@@ -123,18 +123,70 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       transition: background 0.2s;
     }
     .hamburger-btn:hover { background: rgba(255, 255, 255, 0.1); }
-    /* Nav Menu Dropdown (Hamburger Drawer) */
+    /* Mobile App Side Overlay Drawer */
+    .nav-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.65);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      z-index: 998;
+    }
+    .nav-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
     .mobile-menu {
-      display: none;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(300px, 82vw);
+      display: flex;
       flex-direction: column;
       gap: 6px;
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius-lg);
-      padding: 10px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+      background: #111827;
+      border-left: 1px solid var(--card-border);
+      padding: 18px 14px 24px;
+      box-shadow: -16px 0 40px rgba(0, 0, 0, 0.6);
+      transform: translateX(100%);
+      transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+      z-index: 999;
+      overflow-y: auto;
     }
-    .mobile-menu.open { display: flex; }
+    .mobile-menu.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px 14px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .drawer-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: 0.02em;
+    }
+    .drawer-close {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      border-radius: 8px;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .drawer-close:hover { background: rgba(255, 255, 255, 0.12); }
     .menu-item {
       display: flex;
       align-items: center;
@@ -492,6 +544,36 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       gap: 6px;
       margin-top: 10px;
     }
+    #pane-settings .card.collapsible > .card-title {
+      cursor: pointer;
+      user-select: none;
+      margin-bottom: 0;
+      padding: 4px 0;
+      justify-content: space-between;
+    }
+    #pane-settings .card.collapsible > .card-title .title-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #pane-settings .card.collapsible > .card-title .chevron {
+      width: 16px;
+      height: 16px;
+      color: var(--text-sub);
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+    }
+    #pane-settings .card.collapsible.open > .card-title .chevron {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }
+    #pane-settings .card.collapsible > .card-body {
+      display: none;
+    }
+    #pane-settings .card.collapsible.open > .card-body {
+      display: block;
+      margin-top: 14px;
+    }
     @media (max-width: 480px) {
       body { padding: 10px 8px 24px; }
       .counter-value { font-size: 2.6rem; }
@@ -521,8 +603,15 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       </button>
     </div>
 
-    <!-- Mobile Dropdown Navigation Menu -->
+    <!-- Mobile Side Drawer Backdrop & Navigation Menu -->
+    <div class="nav-backdrop" id="nav-backdrop" onclick="closeNavMenu()"></div>
     <div class="mobile-menu" id="mobile-menu">
+      <div class="drawer-header">
+        <span class="drawer-title">Menu</span>
+        <button type="button" class="drawer-close" onclick="closeNavMenu()" aria-label="Close Menu">
+          <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
       <button type="button" class="menu-item active" data-tab="snooker" onclick="switchTab('snooker')">
         <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4"></circle></svg>
         <span>Snooker Hub</span>
@@ -542,6 +631,10 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       <a href="/update" class="menu-item">
         <svg class="icon" viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path><polyline points="16 16 12 12 8 16"></polyline></svg>
         <span>Firmware OTA Update</span>
+      </a>
+      <a href="/logout" class="menu-item" style="color:var(--red);">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+        <span>Sign Out</span>
       </a>
     </div>
 
@@ -875,6 +968,59 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
         <div id="blocked-cards-list" style="margin-top:8px;"></div>
       </div>
 
+      <!-- Servo Angle Calibration Card -->
+      <div class="card">
+        <div class="card-title">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Servo Angle Calibration</span>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-sub);margin-bottom:12px;">
+          Adjust the resting (locked) and open (unlocked) angles. Saved to EEPROM and applied automatically on every reboot.
+        </p>
+
+        <div class="form-group">
+          <label style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Starting Angle (Locked / Resting)</span>
+            <span id="servo-start-val" style="font-weight:600;color:var(--accent);">180&deg;</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <input type="range" id="servo-start-range" min="0" max="180" value="180" oninput="syncServoInput('start', this.value)" style="flex:1;min-width:140px;">
+            <input type="number" id="servo-start-num" min="0" max="180" value="180" oninput="syncServoInput('start', this.value)" style="width:76px;text-align:center;">
+          </div>
+          <p class="hint">Range: 0&deg; to 180&deg; (default: 180&deg;)</p>
+        </div>
+
+        <div class="form-group">
+          <label style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Ending Angle (Unlocked / Open)</span>
+            <span id="servo-end-val" style="font-weight:600;color:var(--accent);">0&deg;</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <input type="range" id="servo-end-range" min="0" max="180" value="0" oninput="syncServoInput('end', this.value)" style="flex:1;min-width:140px;">
+            <input type="number" id="servo-end-num" min="0" max="180" value="0" oninput="syncServoInput('end', this.value)" style="width:76px;text-align:center;">
+          </div>
+          <p class="hint">Range: 0&deg; to 180&deg; (default: 0&deg;)</p>
+        </div>
+
+        <div id="servo-config-feedback" style="display:none;padding:10px 12px;border-radius:var(--radius-md);margin-bottom:12px;font-size:0.82rem;"></div>
+
+        <div class="btn-grid" style="margin-top:8px;">
+          <button type="button" class="btn btn-primary" id="btn-save-servo" onclick="saveServoConfig(false)">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+            <span>Save Angles</span>
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-test-servo" onclick="saveServoConfig(true)">
+            <svg class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>Save &amp; Test Sweep</span>
+          </button>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-invert-servo" onclick="invertServoAngles()" style="width:100%;margin-top:8px;">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+          <span>Invert Direction (Swap Start &amp; End)</span>
+        </button>
+        <p id="servo-saved-summary" class="hint" style="margin-top:10px;">Active EEPROM config: Start 180&deg; &rarr; End 0&deg; (Standard)</p>
+      </div>
+
       <!-- WiFi & Admin Credentials Form -->
       <div class="card">
         <div class="card-title">
@@ -962,6 +1108,32 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
         <div class="data-row"><span class="data-label">Free Heap RAM</span><span class="data-val" id="sys-heap">--</span></div>
         <div class="data-row"><span class="data-label">CPU Frequency</span><span class="data-val" id="sys-cpu">--</span></div>
         <div class="data-row"><span class="data-label">Chip ID</span><span class="data-val" id="sys-chip">--</span></div>
+      </div>
+
+      <!-- Device Event Logs (Black Box) -->
+      <div class="card" id="card-device-logs">
+        <div class="card-title">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          <span>Device Event Logs (Black Box)</span>
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-sub);margin-bottom:10px;">
+          Persistent hardware log stored in flash. Captures reboots, brownouts during servo sweeps, RFID reads, lockouts, Wi-Fi drops, and cloud errors.
+        </p>
+        <div id="device-logs-box" style="background:#090d14;border:1px solid var(--card-border);border-radius:10px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.74rem;line-height:1.5;max-height:280px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;color:#cbd5e1;margin-bottom:10px;">Tap Refresh to load device logs...</div>
+        <div class="btn-grid">
+          <button type="button" class="btn btn-primary" onclick="fetchDeviceLogs()">
+            <svg class="icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Refresh Logs</span>
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="downloadDeviceLogs()">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Download .txt</span>
+          </button>
+        </div>
+        <button type="button" class="btn btn-danger" onclick="clearDeviceLogs()" style="width:100%;margin-top:8px;">
+          <svg class="icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          <span>Clear Logs</span>
+        </button>
       </div>
 
       <!-- Device Operations -->
@@ -1224,9 +1396,21 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       return html;
     }
 
+    function closeNavMenu() {
+      const menu = document.getElementById("mobile-menu");
+      const backdrop = document.getElementById("nav-backdrop");
+      if (menu) menu.classList.remove("open");
+      if (backdrop) backdrop.classList.remove("open");
+      document.body.style.overflow = "";
+    }
+
     function toggleNavMenu() {
       const menu = document.getElementById("mobile-menu");
-      menu.classList.toggle("open");
+      const backdrop = document.getElementById("nav-backdrop");
+      if (!menu) return;
+      const isOpen = menu.classList.toggle("open");
+      if (backdrop) backdrop.classList.toggle("open", isOpen);
+      document.body.style.overflow = isOpen ? "hidden" : "";
     }
 
     function switchTab(tabName) {
@@ -1239,8 +1423,7 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       document.querySelectorAll(".tab-pane").forEach(pane => {
         pane.classList.toggle("active", pane.id === "pane-" + tabName);
       });
-      const menu = document.getElementById("mobile-menu");
-      if (menu) menu.classList.remove("open");
+      closeNavMenu();
       if (window.history && window.history.replaceState) {
         window.history.replaceState(null, null, "#" + tabName);
       }
@@ -1465,6 +1648,92 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       });
     }
 
+    let servoConfigLoaded = false;
+
+    function syncServoInput(which, rawVal) {
+      let val = parseInt(rawVal, 10);
+      if (isNaN(val)) val = 0;
+      if (val < 0) val = 0;
+      if (val > 180) val = 180;
+      const rEl = document.getElementById("servo-" + which + "-range");
+      const nEl = document.getElementById("servo-" + which + "-num");
+      const vEl = document.getElementById("servo-" + which + "-val");
+      if (rEl) rEl.value = val;
+      if (nEl) nEl.value = val;
+      if (vEl) vEl.innerHTML = val + "&deg;";
+    }
+
+    function formatServoSummary(startDeg, endDeg) {
+      const dirLabel = startDeg < endDeg ? "Inverted" : (startDeg > endDeg ? "Standard" : "Static");
+      return "Active EEPROM config: Start " + startDeg + "&deg; &rarr; End " + endDeg + "&deg; (" + dirLabel + ")";
+    }
+
+    function invertServoAngles() {
+      const curStart = parseInt(document.getElementById("servo-start-num").value, 10);
+      const curEnd = parseInt(document.getElementById("servo-end-num").value, 10);
+      const nextStart = isNaN(curEnd) ? 0 : curEnd;
+      const nextEnd = isNaN(curStart) ? 180 : curStart;
+      syncServoInput("start", nextStart);
+      syncServoInput("end", nextEnd);
+      saveServoConfig(false);
+    }
+
+    function saveServoConfig(runTest) {
+      const startVal = parseInt(document.getElementById("servo-start-num").value, 10);
+      const endVal = parseInt(document.getElementById("servo-end-num").value, 10);
+      const fb = document.getElementById("servo-config-feedback");
+
+      if (isNaN(startVal) || isNaN(endVal) || startVal < 0 || startVal > 180 || endVal < 0 || endVal > 180) {
+        fb.style.display = "block";
+        fb.style.background = "rgba(248, 81, 73, 0.15)";
+        fb.style.color = "#f85149";
+        fb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+        fb.textContent = "Angles must be integers between 0 and 180.";
+        return;
+      }
+
+      fb.style.display = "block";
+      fb.style.background = "rgba(56, 189, 248, 0.15)";
+      fb.style.color = "#38bdf8";
+      fb.style.border = "1px solid rgba(56, 189, 248, 0.3)";
+      fb.textContent = runTest ? "Saving angles & running sweep test..." : "Saving servo angles to EEPROM...";
+
+      const params = new URLSearchParams();
+      params.append("start", String(startVal));
+      params.append("end", String(endVal));
+
+      fetch("/api/servo/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString()
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.status === "ok") {
+          const sumEl = document.getElementById("servo-saved-summary");
+          if (sumEl) sumEl.innerHTML = formatServoSummary(res.servo_start_angle, res.servo_end_angle);
+          fb.style.background = "rgba(16, 185, 129, 0.15)";
+          fb.style.color = "#10b981";
+          fb.style.border = "1px solid rgba(16, 185, 129, 0.3)";
+          fb.innerHTML = "Saved to memory! Start: <strong>" + res.servo_start_angle + "&deg;</strong>, End: <strong>" + res.servo_end_angle + "&deg;</strong>." + (runTest ? " Sweeping servo now..." : "");
+          if (runTest) {
+            fetch("/api/servo/open", { method: "POST" }).catch(() => {});
+          }
+        } else {
+          fb.style.background = "rgba(248, 81, 73, 0.15)";
+          fb.style.color = "#f85149";
+          fb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+          fb.textContent = res.message || "Failed to save servo configuration.";
+        }
+      })
+      .catch(err => {
+        fb.style.background = "rgba(248, 81, 73, 0.15)";
+        fb.style.color = "#f85149";
+        fb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+        fb.textContent = "Error saving servo angles: " + err.message;
+      });
+    }
+
     function saveSettingsWithoutReboot() {
       const ssid = document.getElementById("field-ssid").value.trim();
       const pass = document.getElementById("field-pass").value;
@@ -1663,6 +1932,15 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
               servoEl.innerHTML = '<span class="badge badge-idle"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> LOCKED</span>';
             }
           }
+          if (typeof data.servo_start_angle === "number" && typeof data.servo_end_angle === "number") {
+            const sumEl = document.getElementById("servo-saved-summary");
+            if (sumEl) sumEl.innerHTML = formatServoSummary(data.servo_start_angle, data.servo_end_angle);
+            if (!servoConfigLoaded) {
+              syncServoInput("start", data.servo_start_angle);
+              syncServoInput("end", data.servo_end_angle);
+              servoConfigLoaded = true;
+            }
+          }
           if (typeof data.offline_queue_count === "number") {
             const oqEl = document.getElementById("offline-queue-status");
             if (oqEl) {
@@ -1733,8 +2011,98 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
         });
     }
 
+    let cachedDeviceLogsText = "";
+
+    function escapeLogHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function fetchDeviceLogs() {
+      const box = document.getElementById("device-logs-box");
+      if (!box) return;
+      box.textContent = "Loading logs...";
+      fetch("/api/logs")
+        .then(r => r.text())
+        .then(txt => {
+          cachedDeviceLogsText = txt || "";
+          if (!txt || !txt.trim()) {
+            box.textContent = "(No diagnostic logs recorded yet)";
+            return;
+          }
+          const lines = txt.trim().split("\n");
+          box.innerHTML = lines.map(line => {
+            const safe = escapeLogHtml(line);
+            if (line.indexOf("[CRIT]") >= 0 || line.indexOf("[ERR]") >= 0) {
+              return '<div style="color:#f87171;">' + safe + '</div>';
+            } else if (line.indexOf("[WARN]") >= 0) {
+              return '<div style="color:#fbbf24;">' + safe + '</div>';
+            } else if (line.indexOf("[BOOT]") >= 0 || line.indexOf("[SERVO]") >= 0) {
+              return '<div style="color:#38bdf8;">' + safe + '</div>';
+            }
+            return '<div>' + safe + '</div>';
+          }).join("");
+          box.scrollTop = box.scrollHeight;
+        })
+        .catch(err => {
+          box.textContent = "Failed to load logs: " + err.message;
+        });
+    }
+
+    function downloadDeviceLogs() {
+      const text = cachedDeviceLogsText || "";
+      if (!text.trim()) {
+        fetchDeviceLogs();
+        return;
+      }
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "smarthive_device_logs.txt";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function clearDeviceLogs() {
+      if (!confirm("Clear all stored device diagnostic logs?")) return;
+      fetch("/api/logs/clear", { method: "POST" })
+        .then(() => fetchDeviceLogs())
+        .catch(() => {});
+    }
+
+    function initSettingsAccordions() {
+      const pane = document.getElementById("pane-settings");
+      if (!pane) return;
+      const cards = pane.querySelectorAll(":scope > .card");
+      cards.forEach(card => {
+        const title = card.querySelector(":scope > .card-title");
+        if (!title || card.classList.contains("collapsible")) return;
+        const body = document.createElement("div");
+        body.className = "card-body";
+        while (title.nextSibling) {
+          body.appendChild(title.nextSibling);
+        }
+        card.appendChild(body);
+        const left = document.createElement("span");
+        left.className = "title-left";
+        while (title.firstChild) left.appendChild(title.firstChild);
+        title.appendChild(left);
+        title.insertAdjacentHTML("beforeend", '<svg class="icon chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>');
+        card.classList.add("collapsible");
+        title.addEventListener("click", () => {
+          const opened = card.classList.toggle("open");
+          if (opened && card.id === "card-device-logs") {
+            fetchDeviceLogs();
+          }
+        });
+      });
+    }
+
     // Initialize initial tab and load config
     window.addEventListener("DOMContentLoaded", () => {
+      initSettingsAccordions();
       const hash = (window.location.hash || "").replace("#", "").toLowerCase();
       const path = (window.location.pathname || "").toLowerCase();
       if (hash === "settings" || path === "/settings") {
@@ -1848,6 +2216,184 @@ const char PROGMEM PAGE_SAVED[] = R"rawliteral(
   </div>
   <script>
     setTimeout(() => { window.location.href = "/"; }, 2500);
+  </script>
+</body>
+</html>
+)rawliteral";
+
+const char PAGE_LOGIN[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sign In | Smarthive Pool</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      min-height: 100vh;
+      background: #0d1117;
+      background-image: radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.14), transparent 60%);
+      color: #e6edf3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 390px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 28px 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+    }
+    .logo-wrap {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #10b981;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+    }
+    .icon { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    h1 { text-align: center; font-size: 1.25rem; font-weight: 700; margin-bottom: 6px; }
+    .sub { text-align: center; font-size: 0.84rem; color: #8b949e; margin-bottom: 22px; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 0.78rem; font-weight: 600; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    input {
+      width: 100%;
+      padding: 12px 42px 12px 14px;
+      border-radius: 10px;
+      border: 1px solid #30363d;
+      background: #0d1117;
+      color: #e6edf3;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: #10b981; }
+    .toggle-btn {
+      position: absolute;
+      right: 10px;
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .toggle-btn:hover { color: #e6edf3; }
+    .err {
+      display: none;
+      background: rgba(248, 81, 73, 0.14);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      color: #f85149;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.84rem;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 10px;
+      background: #10b981;
+      color: #06281e;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.15s;
+    }
+    .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+    .foot { text-align: center; margin-top: 16px; font-size: 0.76rem; color: #6e7681; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo-wrap">
+      <svg class="icon" style="width:28px;height:28px;" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+    </div>
+    <h1>Smarthive Pool Portal</h1>
+    <p class="sub">Sign in with your controller admin credentials</p>
+    <div class="err" id="login-err"></div>
+    <form id="login-form" onsubmit="submitLogin(event)">
+      <div class="form-group">
+        <label for="login-user">Username</label>
+        <div class="input-wrap">
+          <input type="text" id="login-user" name="username" autocomplete="username" placeholder="admin" required autofocus>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="login-pass">Password</label>
+        <div class="input-wrap">
+          <input type="password" id="login-pass" name="password" autocomplete="current-password" placeholder="Enter password" required>
+          <button type="button" class="toggle-btn" onclick="togglePass()" aria-label="Toggle password visibility">
+            <svg class="icon" id="eye-icon" style="width:18px;height:18px;" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </button>
+        </div>
+      </div>
+      <button type="submit" class="btn-submit" id="btn-login">
+        <svg class="icon" style="width:18px;height:18px;" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+        <span id="btn-login-text">Sign In</span>
+      </button>
+    </form>
+    <p class="foot">Protected Local Hardware Controller</p>
+  </div>
+  <script>
+    function togglePass() {
+      const inp = document.getElementById("login-pass");
+      inp.type = inp.type === "password" ? "text" : "password";
+    }
+    function submitLogin(e) {
+      e.preventDefault();
+      const errEl = document.getElementById("login-err");
+      const btn = document.getElementById("btn-login");
+      const txt = document.getElementById("btn-login-text");
+      errEl.style.display = "none";
+      btn.disabled = true;
+      txt.textContent = "Signing in...";
+      const params = new URLSearchParams();
+      params.append("username", document.getElementById("login-user").value.trim());
+      params.append("password", document.getElementById("login-pass").value);
+      fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+        credentials: "same-origin"
+      })
+      .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(res => {
+        if (res.ok && res.data && res.data.ok) {
+          window.location.href = "/";
+        } else {
+          errEl.textContent = (res.data && res.data.message) ? res.data.message : "Invalid username or password.";
+          errEl.style.display = "block";
+          btn.disabled = false;
+          txt.textContent = "Sign In";
+        }
+      })
+      .catch(() => {
+        errEl.textContent = "Connection error. Please try again.";
+        errEl.style.display = "block";
+        btn.disabled = false;
+        txt.textContent = "Sign In";
+      });
+    }
   </script>
 </body>
 </html>

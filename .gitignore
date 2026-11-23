@@ -11,6 +11,9 @@ Dashboard/.env*
 Dashboard/out/
 
 # Arduino build artifacts
-*.bin
+# *.bin
 *.elf
-build/
+
+/Arduino/ArduinoUnoNFC/build/sketch
+/Arduino/ArduinoUnoNFC/build/libraries
+/Arduino/ArduinoUnoNFC
