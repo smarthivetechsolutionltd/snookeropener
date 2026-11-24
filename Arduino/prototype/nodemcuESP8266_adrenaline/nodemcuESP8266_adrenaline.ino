@@ -873,10 +873,11 @@ void setRGB(bool red, bool green) {
 void updateLED() {
   unsigned long now = millis();
 
-  // 1. Table Unlocked / Authorized Card Detected: SOLID GREEN!
-  // Stays bright solid green while the servo unlocks, holds the ball gate open, and returns
+  // 1. Table Unlocked / Authorized Card Accepted: RAPID GREEN BLINK!
+  // Blinks green rapidly (100ms on / 100ms off) while the servo unlocks, holds the ball gate open, and returns
   if (servoUnlocked || servoState != SERVO_IDLE_DETACHED) {
-    setRGB(false, true); // Solid Green ON, Red OFF
+    bool rapidGreen = ((now / 100) % 2 == 0); // 5Hz rapid green blink
+    setRGB(false, rapidGreen);
     return;
   }
 
