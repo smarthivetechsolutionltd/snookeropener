@@ -331,7 +331,7 @@ bool keepAliveEnabled = false;
 
 // ==================== ADRENALINE CLOUD SYNC CONFIGURATION ====================
 // Change to your public live domain, tunnel URL, or LAN IP (e.g. "http://192.168.5.6:3000/api/snooker/sync")
-char adrenalineCloudUrl[160] = "https://adrenalinerecreationhub.onrender.com/api/snooker/sync";
+char adrenalineCloudUrl[160] = "https://adrenalinerecreationhub.com/api/snooker/sync";
 // char adrenalineCloudUrl[160] = "http://192.168.5.6:3000/api/snooker/sync";
 
 const char* adrenalineDeviceToken = "adrenaline_snooker_secret_2026";

@@ -4,7 +4,7 @@ This sketch (`nodemcuESP8266_adrenaline.ino`) contains the prototype firmware de
 
 ## Specifications
 - **Target Hardware**: NodeMCU ESP8266 (ESP-12E / ESP-12F)
-- **Cloud Backend**: Adrenaline Recreation Hub (`https://adrenalinerecreationhub.onrender.com/api/snooker/sync`)
+- **Cloud Backend**: Adrenaline Recreation Hub (`https://adrenalinerecreationhub.com/api/snooker/sync`)
 - **Default Device Secret**: `adrenaline_snooker_secret_2026`
 - **Authentication Realm**: `Adrenaline_Snooker_Hub`
 - **SoftAP Default**: `NodeMCU_Hub` / `setup1234`
