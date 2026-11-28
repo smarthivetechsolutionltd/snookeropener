@@ -103,10 +103,13 @@ def apply_boolean(target, tool_obj, op='DIFFERENCE'):
     bpy.ops.object.modifier_apply(modifier=mod.name)
     bpy.data.objects.remove(tool_obj, do_unlink=True)
 
-def add_text_mesh(name, text, size, extrude, loc, rot=(0,0,0), mat=None):
+def add_text_mesh(name, text, size, extrude, loc, rot=(0,0,0), mat=None, bold_offset=0.0):
     bpy.ops.object.text_add(location=loc)
     obj = bpy.context.active_object
     obj.name = name
+    font_path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+    if bold_offset > 0.0 and os.path.exists(font_path):
+        obj.data.font = bpy.data.fonts.load(font_path)
     obj.data.body = text
     obj.data.size = size
     obj.data.extrude = extrude / 2.0
@@ -241,9 +244,27 @@ bev_rfid_base.angle_limit = math.radians(60)
 bpy.context.view_layer.objects.active = rfid_base
 bpy.ops.object.modifier_apply(modifier="Bevel")
 
-# Main Internal Cavity (42.0mm W x 92.0mm L x 12.0mm deep, floor 2.0mm thick from Z=0 to Z=2.0)
-rfid_cavity = add_box("RFID_Cavity", (42.0, 92.0, 13.0), (RFID_X, RFID_Y, RFID_Z + 2.0))
+# Main Internal Cavity (51.2mm W x 95.2mm L x 12.4mm deep -> 2.4mm lean walls, 1.6mm floor!)
+rfid_cavity = add_box("RFID_Cavity", (51.2, 95.2, 13.5), (RFID_X, RFID_Y, RFID_Z + 1.6))
 apply_boolean(rfid_base, rfid_cavity, 'DIFFERENCE')
+
+# Weight-saving floor cutout windows (leaves solid structural ribs under RC522 standoffs & ears)
+floor_cut_rc522 = add_box("RFID_Floor_Lighten_1", (24.0, 26.0, 5.0), (RFID_X, RFID_Y - 18.0, RFID_Z - 1.5))
+apply_boolean(rfid_base, floor_cut_rc522, 'DIFFERENCE')
+floor_cut_top = add_box("RFID_Floor_Lighten_2", (26.0, 12.0, 5.0), (RFID_X, RFID_Y + 37.0, RFID_Z - 1.5))
+apply_boolean(rfid_base, floor_cut_top, 'DIFFERENCE')
+
+# Local reinforced backing bosses ONLY where hardware mounts (keeps walls 2.4mm everywhere else)
+# 1) Right-wall slide switch backing block (Y = +31.0mm)
+sw_backing = add_box("RFID_Switch_Backing", (5.2, 15.0, 9.6), (RFID_X + POD_W / 2.0 - 2.6, RFID_Y + 31.0, RFID_Z + 1.6), mat_rfid_base)
+apply_boolean(rfid_base, sw_backing, 'UNION')
+# 2) Top-wall USB-C female port backing block (Y = +50.0mm)
+usbc_backing = add_box("RFID_USBC_Backing", (15.0, 5.4, 9.6), (RFID_X, RFID_Y + POD_L / 2.0 - 2.7, RFID_Z + 1.6), mat_rfid_base)
+apply_boolean(rfid_base, usbc_backing, 'UNION')
+# 3) 4x Corner M2.5 Faceplate Screw Bosses (Ø6.4mm pillars at X=±22.0, Y=±44.0)
+for i, (bx, by) in enumerate([(-22.0, -44.0), (22.0, -44.0), (-22.0, 44.0), (22.0, 44.0)]):
+    c_boss = add_cylinder(f"RFID_CornerBoss_{i}", 3.2, POD_BASE_H - 1.6, (RFID_X + bx, RFID_Y + by, RFID_Z + 1.6), mat=mat_rfid_base)
+    apply_boolean(rfid_base, c_boss, 'UNION')
 
 # RC522 Standoffs with Pilot Holes (RC522 center at Y = -18.0mm)
 rc522_hole_offsets = [
@@ -253,9 +274,9 @@ rc522_hole_offsets = [
     ( 17.175,  14.30),
 ]
 for i, (ox, oy) in enumerate(rc522_hole_offsets):
-    s_col = add_cylinder(f"RFID_Standoff_{i}", 2.8, 3.0, (RFID_X + ox, RFID_Y - 18.0 + oy, RFID_Z + 2.0), mat=mat_rfid_base)
+    s_col = add_cylinder(f"RFID_Standoff_{i}", 2.6, 3.4, (RFID_X + ox, RFID_Y - 18.0 + oy, RFID_Z + 1.6), mat=mat_rfid_base)
     apply_boolean(rfid_base, s_col, 'UNION')
-    s_hole = add_cylinder(f"RFID_ScrewPilot_{i}", 1.15, 4.5, (RFID_X + ox, RFID_Y - 18.0 + oy, RFID_Z + 1.2))
+    s_hole = add_cylinder(f"RFID_ScrewPilot_{i}", 1.15, 4.5, (RFID_X + ox, RFID_Y - 18.0 + oy, RFID_Z + 1.0))
     apply_boolean(rfid_base, s_hole, 'DIFFERENCE')
 
 # RECTANGULAR FLOOR PASS-THROUGH OPENING (26.0mm W x 14.0mm L through floor)
@@ -263,9 +284,15 @@ for i, (ox, oy) in enumerate(rc522_hole_offsets):
 floor_passthrough = add_box("RFID_Floor_PassThrough", (26.0, 14.0, 6.0), (RFID_X, RFID_Y + 10.0, RFID_Z - 2.0))
 apply_boolean(rfid_base, floor_passthrough, 'DIFFERENCE')
 
+# OPEN-TOP DROP-IN CABLE U-NOTCH ON LEFT WALL (Y = +15..+33mm, Z = 6.5..15.0mm)
+# Lets a pre-soldered wire harness drop straight in from the top without threading
+# connectors through a closed hole, while RFID_Pod_Faceplate closes completely flat over it!
+left_dropin_notch = add_box("RFID_Left_DropIn_CableNotch", (8.0, 18.0, 9.0), (RFID_X - POD_W / 2.0, RFID_Y + 24.0, RFID_Z + 6.5))
+apply_boolean(rfid_base, left_dropin_notch, 'DIFFERENCE')
+
 # HW-479 RGB LED MODULE MOUNTING CRADLE (20.5mm W x 15.5mm L pocket at Y = +24.0mm)
-hw479_plat_l = add_box("HW479_Plat_L", (2.5, 15.5, 4.0), (RFID_X - 9.0, RFID_Y + 24.0, RFID_Z + 2.0), mat_rfid_base)
-hw479_plat_r = add_box("HW479_Plat_R", (2.5, 15.5, 4.0), (RFID_X + 9.0, RFID_Y + 24.0, RFID_Z + 2.0), mat_rfid_base)
+hw479_plat_l = add_box("HW479_Plat_L", (2.2, 15.5, 4.4), (RFID_X - 9.0, RFID_Y + 24.0, RFID_Z + 1.6), mat_rfid_base)
+hw479_plat_r = add_box("HW479_Plat_R", (2.2, 15.5, 4.4), (RFID_X + 9.0, RFID_Y + 24.0, RFID_Z + 1.6), mat_rfid_base)
 apply_boolean(rfid_base, hw479_plat_l, 'UNION')
 apply_boolean(rfid_base, hw479_plat_r, 'UNION')
 
@@ -294,12 +321,26 @@ apply_boolean(rfid_base, switch_lever_slot, 'DIFFERENCE')
 switch_pocket_side = add_box("Slide_Switch_Side_Pocket", (4.8, 9.6, 6.0), (RFID_X + 28.0 - 4.6, RFID_Y + SW_CY, RFID_Z + 4.8))
 apply_boolean(rfid_base, switch_pocket_side, 'DIFFERENCE')
 
-# 2x Table Wood Mounting Countersunk Holes (M3 wood screws at X = 0, Y = ±43.0mm)
-wood_screw_coords = [(0.0, -43.0), (0.0, 43.0)]
-for i, (wx, wy) in enumerate(wood_screw_coords):
-    w_hole = add_cylinder(f"RFID_Wood_Hole_{i}", 1.7, 6.0, (RFID_X + wx, RFID_Y + wy, RFID_Z - 1.0))
+# 4x Compact EXTERNAL Table Wood Mounting Ears (outside the enclosure so you can screw/unscrew
+# without removing the RC522, RGB LED, or opening the faceplate!)
+# Positioned at Y = -32mm and Y = +6mm (fully clear of the right-side switch at Y=+31mm and top USB-C at Y=+50mm)
+ear_protrude = 9.5
+ear_len_y = 11.0
+ear_thick_z = 3.2
+ext_ear_coords = [
+    (-POD_W / 2.0 - ear_protrude / 2.0 + 1.2, -32.0),
+    ( POD_W / 2.0 + ear_protrude / 2.0 - 1.2, -32.0),
+    (-POD_W / 2.0 - ear_protrude / 2.0 + 1.2,   6.0),
+    ( POD_W / 2.0 + ear_protrude / 2.0 - 1.2,   6.0),
+]
+for i, (ex, ey) in enumerate(ext_ear_coords):
+    ear_box = add_box(f"RFID_Ext_Ear_{i}", (ear_protrude + 2.4, ear_len_y, ear_thick_z), (RFID_X + ex, RFID_Y + ey, RFID_Z), mat_rfid_base)
+    apply_boolean(rfid_base, ear_box, 'UNION')
+    hx = RFID_X + (-POD_W / 2.0 - ear_protrude / 2.0 if ex < 0 else POD_W / 2.0 + ear_protrude / 2.0)
+    hy = RFID_Y + ey
+    w_hole = add_cylinder(f"RFID_Ext_WoodHole_{i}", 1.9, ear_thick_z + 4.0, (hx, hy, RFID_Z - 1.5))
     apply_boolean(rfid_base, w_hole, 'DIFFERENCE')
-    w_csink = add_cylinder(f"RFID_Wood_Csink_{i}", 3.4, 4.0, (RFID_X + wx, RFID_Y + wy, RFID_Z + POD_BASE_H - 3.8))
+    w_csink = add_cylinder(f"RFID_Ext_WoodCsink_{i}", 3.5, 1.8, (hx, hy, RFID_Z + ear_thick_z - 1.4))
     apply_boolean(rfid_base, w_csink, 'DIFFERENCE')
 
 # 4 Corner Fastener Boss Holes for Faceplate (M2.5 screws at X = ±22.0mm, Y = ±44.0mm)
@@ -344,66 +385,70 @@ apply_boolean(rfid_face, rgb_hole, 'DIFFERENCE')
 rgb_bevel = add_cylinder("Faceplate_RGB_Bevel", 3.2, 1.2, (RFID_X, RFID_Y + 24.0, RFID_FACE_ELEV + FACE_H - 1.0))
 apply_boolean(rfid_face, rgb_bevel, 'DIFFERENCE')
 
-# OFFICIAL SMARTHIVETECH 3D LOGO EMBLEM on Faceplate (Y = +36.0mm, size 13.0mm high)
+# OFFICIAL SMARTHIVE 3D LOGO EMBLEM — RAISED +0.8mm FOR HIGH VISIBILITY & 2-COLOR SWAP!
 logo_rfid = create_logo_mesh(
-    "Logo_RFID_Cut",
-    target_height=13.0,
-    loc=(RFID_X, RFID_Y + 36.0, RFID_FACE_ELEV + FACE_H),
-    extrude=0.7
+    "Logo_RFID_Raised",
+    target_height=15.5,
+    loc=(RFID_X, RFID_Y + 37.0, RFID_FACE_ELEV + FACE_H + 0.3),
+    extrude=1.2
 )
-apply_boolean(rfid_face, logo_rfid, 'DIFFERENCE')
+apply_boolean(rfid_face, logo_rfid, 'UNION')
 
-# Debossed "SMARTHIVETECH SOLUTIONS" Branding Text
+# BOLD RAISED "SMARTHIVE POOL" Branding Text (+0.8mm proud, bold_offset=0.08mm for crisp 0.4mm nozzle)
 brand_text_rfid = add_text_mesh(
     "RFID_Brand_Text",
-    "SMARTHIVETECH SOLUTIONS",
-    size=2.4,
-    extrude=0.7,
-    loc=(RFID_X, RFID_Y + 16.5, RFID_FACE_ELEV + FACE_H - 0.25)
+    "SMARTHIVE POOL",
+    size=4.5,
+    extrude=1.2,
+    loc=(RFID_X, RFID_Y + 14.5, RFID_FACE_ELEV + FACE_H + 0.3),
+    bold_offset=0.08
 )
-apply_boolean(rfid_face, brand_text_rfid, 'DIFFERENCE')
+apply_boolean(rfid_face, brand_text_rfid, 'UNION')
 
-# DEBOSSED ( I - O ) LABELS ON THE FACEPLATE EDGE NEXT TO THE SLIDE SWITCH (Y = +31.0mm)
+# BOLD DEBOSSED ( I - O ) LABELS ON THE FACEPLATE EDGE NEXT TO THE SLIDE SWITCH (Y = +31.0mm)
 label_on = add_text_mesh(
     "Label_Switch_ON",
     "I",
-    size=2.4,
-    extrude=0.6,
-    loc=(RFID_X + 23.5, RFID_Y + SW_CY + 3.5, RFID_FACE_ELEV + FACE_H - 0.25)
+    size=3.2,
+    extrude=1.2,
+    loc=(RFID_X + 23.0, RFID_Y + SW_CY + 3.8, RFID_FACE_ELEV + FACE_H - 0.1),
+    bold_offset=0.05
 )
 apply_boolean(rfid_face, label_on, 'DIFFERENCE')
 
 label_dash = add_text_mesh(
     "Label_Switch_Dash",
     "-",
-    size=2.4,
-    extrude=0.6,
-    loc=(RFID_X + 23.5, RFID_Y + SW_CY, RFID_FACE_ELEV + FACE_H - 0.25)
+    size=3.2,
+    extrude=1.2,
+    loc=(RFID_X + 23.0, RFID_Y + SW_CY, RFID_FACE_ELEV + FACE_H - 0.1),
+    bold_offset=0.05
 )
 apply_boolean(rfid_face, label_dash, 'DIFFERENCE')
 
 label_off = add_text_mesh(
     "Label_Switch_OFF",
     "O",
-    size=2.4,
-    extrude=0.6,
-    loc=(RFID_X + 23.5, RFID_Y + SW_CY - 3.5, RFID_FACE_ELEV + FACE_H - 0.25)
+    size=3.2,
+    extrude=1.2,
+    loc=(RFID_X + 23.0, RFID_Y + SW_CY - 3.8, RFID_FACE_ELEV + FACE_H - 0.1),
+    bold_offset=0.05
 )
 apply_boolean(rfid_face, label_off, 'DIFFERENCE')
 
-# RFID Card Tap Target Graphics (Centered over antenna coil at X=0, Y=-22.0mm)
-r_ring1 = add_cylinder("RFID_Graphic_Ring1", 14.0, 0.5, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.35))
-r_ring1_c = add_cylinder("RFID_Graphic_Ring1_c", 12.5, 1.2, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.8))
+# RFID Card Tap Target Graphics — RAISED +0.7mm to match Logo & Text (Centered at X=0, Y=-22.0mm)
+r_ring1 = add_cylinder("RFID_Graphic_Ring1", 14.2, 1.0, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.3))
+r_ring1_c = add_cylinder("RFID_Graphic_Ring1_c", 12.2, 2.0, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.8))
 apply_boolean(r_ring1, r_ring1_c, 'DIFFERENCE')
-apply_boolean(rfid_face, r_ring1, 'DIFFERENCE')
+apply_boolean(rfid_face, r_ring1, 'UNION')
 
-r_ring2 = add_cylinder("RFID_Graphic_Ring2", 9.5, 0.5, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.35))
-r_ring2_c = add_cylinder("RFID_Graphic_Ring2_c", 8.25, 1.2, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.8))
+r_ring2 = add_cylinder("RFID_Graphic_Ring2", 9.6, 1.0, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.3))
+r_ring2_c = add_cylinder("RFID_Graphic_Ring2_c", 7.8, 2.0, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.8))
 apply_boolean(r_ring2, r_ring2_c, 'DIFFERENCE')
-apply_boolean(rfid_face, r_ring2, 'DIFFERENCE')
+apply_boolean(rfid_face, r_ring2, 'UNION')
 
-r_dot = add_cylinder("RFID_Graphic_Dot", 2.3, 0.5, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.35))
-apply_boolean(rfid_face, r_dot, 'DIFFERENCE')
+r_dot = add_cylinder("RFID_Graphic_Dot", 2.5, 1.0, (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.3))
+apply_boolean(rfid_face, r_dot, 'UNION')
 
 card_box = add_box("RFID_Card_Outline", (20.0, 13.0, 0.5), (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.35))
 card_box_c = add_box("RFID_Card_Outline_c", (18.2, 11.2, 1.2), (RFID_X, RFID_Y - 22.0, RFID_FACE_ELEV + FACE_H - 0.8))
@@ -604,10 +649,10 @@ for l_idx in range(-2, 3):
 # =============================================================
 print("3. Building Wall-Mount Power Bank Holder...")
 
-PBANK_W = 78.0
-PBANK_D = 22.0
-PBANK_H = 75.0
-PBANK_CRADLE_X = -110.0
+PBANK_W = 98.0   # Expanded +20mm (fits chunky 20,000-40,000mAh power banks!)
+PBANK_D = 42.0   # Expanded +20mm breadth/depth (almost 2x thicker!)
+PBANK_H = 78.0
+PBANK_CRADLE_X = -128.0
 PBANK_CRADLE_Y = 0.0
 PBANK_CRADLE_Z = 0.0
 
@@ -655,19 +700,20 @@ pbank_side_win_r = add_box("PBank_Side_Win_R", (10.0, PBANK_D - 8.0, PBANK_H - P
 apply_boolean(pbank_cradle, pbank_side_win_l, 'DIFFERENCE')
 apply_boolean(pbank_cradle, pbank_side_win_r, 'DIFFERENCE')
 
-# Boldly engrave "SMARTHIVE POOL" on the front retaining wall without logo
+# Boldly engrave "SMARTHIVE POOL" on the front retaining wall in Arial Bold
 brand_text_pbank = add_text_mesh(
     "PBank_Brand_Text",
     "SMARTHIVE POOL",
-    size=7.0,
+    size=8.2,
     extrude=2.0,
     loc=(PBANK_CRADLE_X, FRONT_WALL_Y, PBANK_CRADLE_Z + 27.0),
-    rot=(math.radians(90), 0, 0)
+    rot=(math.radians(90), 0, 0),
+    bold_offset=0.05
 )
 apply_boolean(pbank_cradle, brand_text_pbank, 'DIFFERENCE')
 
 # Bottom Support Ledge Cable & Drainage Pass-Through Slot
-pbank_bot_slot = add_box("PBank_Bottom_Slot", (34.0, 14.0, 10.0), (PBANK_CRADLE_X, PBANK_CRADLE_Y - 0.25, PBANK_CRADLE_Z - 2.0))
+pbank_bot_slot = add_box("PBank_Bottom_Slot", (44.0, 20.0, 10.0), (PBANK_CRADLE_X, PBANK_CRADLE_Y - 0.25, PBANK_CRADLE_Z - 2.0))
 apply_boolean(pbank_cradle, pbank_bot_slot, 'DIFFERENCE')
 
 # 4x Countersunk Wall-Mount Screw Holes on Side Flanges (M4 / #8 Wood or Wall Screws)

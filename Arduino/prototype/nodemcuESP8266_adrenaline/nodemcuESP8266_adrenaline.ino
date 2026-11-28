@@ -110,6 +110,9 @@ void saveAuthorizedCards();
 #define ADDR_SERVO_END    512 // 1 byte uint8_t (0..180, ending/unlocked angle)
 #define ADDR_SERVO_IN_FLIGHT 513 // 1 byte (0xA5 while servo sweep active; detects mid-sweep brownout/reboot)
 #define SERVO_IN_FLIGHT_VAL  0xA5
+#define ADDR_SERVO_HOLD_FLAG 514 // 1 byte
+#define SERVO_HOLD_FLAG_VAL  0x5B
+#define ADDR_SERVO_HOLD_SEC  515 // 1 byte uint8_t (2..10 seconds, gate open hold time)
 
 // Multi-WiFi Memory Block (710..1105) - Remembers previously connected networks
 #define ADDR_SAVED_WIFI_FLAG  710 // 1 byte
@@ -273,6 +276,7 @@ const unsigned long NFC_COOLDOWN_MS = 800; // 0.8s responsive cooldown between c
 
 int servoStartAngle = SERVO_LOCKED_ANGLE;
 int servoEndAngle   = SERVO_UNLOCKED_ANGLE;
+int servoHoldSec    = 4; // Configurable gate open hold time (2..10 seconds, default 4s)
 
 Servo lockServo;
 bool servoUnlocked = false;
@@ -281,6 +285,7 @@ bool servoDetached = true;
 // Non-blocking smooth soft-start motion state machine
 enum ServoMotionState {
   SERVO_IDLE_DETACHED,
+  SERVO_PRE_ATTACH_DELAY, // Waits 120ms so HTTP/Wi-Fi TX finishes before MG996R attaches (anti-brownout)
   SERVO_SWEEPING_OPEN,
   SERVO_HOLDING_OPEN,
   SERVO_SWEEPING_CLOSE,
@@ -290,8 +295,17 @@ enum ServoMotionState {
 ServoMotionState servoState = SERVO_IDLE_DETACHED;
 int currentServoAngle = SERVO_LOCKED_ANGLE;
 unsigned long lastServoStepTime = 0;
+unsigned long servoPreAttachStartTime = 0;
 unsigned long servoHoldStartTime = 0;
 unsigned long servoCloseSettleStartTime = 0;
+unsigned long lastServoDetachMs = 0;
+
+// Built-in Multi-Rack Stress Test Runner (runs autonomously on ESP8266)
+bool stressTestActive = false;
+int stressTestTotal = 0;
+int stressTestDone = 0;
+int stressTestGapSec = 3;
+unsigned long stressTestNextMs = 0;
 
 // 3. Status Indicator (RGB / Dual-Color LED):
 // -------------------------------------------------------------------------
@@ -990,6 +1004,10 @@ void handleAPI() {
   json += "\"servo_state\":\"" + String(servoUnlocked ? "UNLOCKED" : "LOCKED") + "\",";
   json += "\"servo_start_angle\":" + String(servoStartAngle) + ",";
   json += "\"servo_end_angle\":" + String(servoEndAngle) + ",";
+  json += "\"servo_hold_sec\":" + String(servoHoldSec) + ",";
+  json += "\"stress_active\":" + String(stressTestActive ? "true" : "false") + ",";
+  json += "\"stress_done\":" + String(stressTestDone) + ",";
+  json += "\"stress_total\":" + String(stressTestTotal) + ",";
   json += "\"keepalive_enabled\":" + String(keepAliveEnabled ? "true" : "false");
   json += "}";
 
@@ -2239,8 +2257,11 @@ void updateNFC() {
 // ==================== MG996R SERVO CONTROLLER (SMOOTH SOFT-START) ====================
 // Micro-stepped non-blocking sweep eliminates the 2.5A locked-rotor inrush spike,
 // preventing power rail dips, voltage drops, and ESP brownout reboots.
-#define SERVO_STEP_DEG         4   // Degrees per step
-#define SERVO_STEP_INTERVAL_MS 12  // Milliseconds between steps (~350ms total travel)
+// Smooth Servo Soft-Start & Anti-Brownout Parameters
+#define SERVO_STEP_DEG          2   // Smaller 2-deg steps reduce MG996R acceleration inrush current
+#define SERVO_STEP_INTERVAL_MS  18  // 18ms between steps (~110 deg/s smooth, low-current sweep)
+#define SERVO_PRE_ATTACH_MS     120 // Let Wi-Fi/HTTP TX finish before energizing servo motor
+#define SERVO_POST_DETACH_MS    800 // Let 5V capacitors recharge before TLS cloud sync fires
 
 unsigned long servoSweepStartMs = 0;
 bool servoBrownoutDetectedAtBoot = false;
@@ -2350,15 +2371,41 @@ void loadServoAngles() {
   }
 }
 
+void loadServoHoldTime() {
+  if (EEPROM.read(ADDR_SERVO_HOLD_FLAG) == SERVO_HOLD_FLAG_VAL) {
+    servoHoldSec = constrain((int)EEPROM.read(ADDR_SERVO_HOLD_SEC), 2, 10);
+  } else {
+    servoHoldSec = 4;
+  }
+}
+
 void saveServoAngles() {
   servoStartAngle = constrain(servoStartAngle, 0, 180);
   servoEndAngle   = constrain(servoEndAngle, 0, 180);
   EEPROM.write(ADDR_SERVO_FLAG, SERVO_FLAG_VAL);
   EEPROM.write(ADDR_SERVO_START, (uint8_t)servoStartAngle);
   EEPROM.write(ADDR_SERVO_END, (uint8_t)servoEndAngle);
+  servoHoldSec = constrain(servoHoldSec, 2, 10);
+  EEPROM.write(ADDR_SERVO_HOLD_FLAG, SERVO_HOLD_FLAG_VAL);
+  EEPROM.write(ADDR_SERVO_HOLD_SEC, (uint8_t)servoHoldSec);
   EEPROM.commit();
   Serial.printf_P(PSTR("[SERVO] Saved angles to EEPROM: Start(Locked)=%d deg, End(Unlocked)=%d deg\n"),
                   servoStartAngle, servoEndAngle);
+}
+
+// Glitch-free MG996R attach/detach helpers (prevents 90° attach kick & floating-pin detach jump-back)
+void attachServoClean(int targetAngle) {
+  lockServo.write(targetAngle);           // Pre-load pulse width BEFORE attach so PWM never flashes 90°
+  lockServo.attach(SERVO_PIN, 550, 2350); // Safe MG996R pulse range (avoids internal mechanical end-stop bounce)
+  lockServo.write(targetAngle);
+  servoDetached = false;
+}
+
+void detachServoClean() {
+  lockServo.detach();
+  pinMode(SERVO_PIN, OUTPUT);
+  digitalWrite(SERVO_PIN, LOW);           // Pull signal wire cleanly to 0V so MG996R never jumps on floating pin
+  servoDetached = true;
 }
 
 void handleServoConfig() {
@@ -2373,37 +2420,44 @@ void handleServoConfig() {
     return;
   }
 
+  if (server.hasArg("hold")) {
+    int newHold = server.arg("hold").toInt();
+    if (newHold < 2 || newHold > 10) {
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Hold time must be between 2 and 10 seconds\"}");
+      return;
+    }
+    servoHoldSec = newHold;
+  }
   servoStartAngle = newStart;
   servoEndAngle   = newEnd;
   saveServoAngles();
 
   // Gently reposition to the new starting (locked) angle if currently idle
   if (servoState == SERVO_IDLE_DETACHED) {
-    lockServo.attach(SERVO_PIN);
     currentServoAngle = servoStartAngle;
-    lockServo.write(currentServoAngle);
-    servoDetached = false;
+    attachServoClean(currentServoAngle);
     servoState = SERVO_SETTLING_CLOSE;
     servoCloseSettleStartTime = millis();
   }
 
   String resp = "{\"status\":\"ok\",\"servo_start_angle\":" + String(servoStartAngle) +
-                ",\"servo_end_angle\":" + String(servoEndAngle) + "}";
+                ",\"servo_end_angle\":" + String(servoEndAngle) + ",\"servo_hold_sec\":" + String(servoHoldSec) + "}";
   server.send(200, "application/json", resp);
 }
 
 void triggerServoDoorLock() {
-  if (servoState == SERVO_IDLE_DETACHED) {
-    lockServo.attach(SERVO_PIN);
-    currentServoAngle = servoStartAngle;
-    lockServo.write(currentServoAngle);
-    servoDetached = false;
-  }
-  servoState = SERVO_SWEEPING_OPEN;
+  unsigned long now = millis();
   servoUnlocked = true;
-  lastServoStepTime = millis();
-  servoSweepStartMs = lastServoStepTime;
+  servoSweepStartMs = now;
   setServoInFlight(true);
+  if (servoState == SERVO_IDLE_DETACHED) {
+    currentServoAngle = servoStartAngle;
+    servoPreAttachStartTime = now;
+    servoState = SERVO_PRE_ATTACH_DELAY; // Defer attach 120ms so HTTP/Wi-Fi TX finishes first
+  } else {
+    servoState = SERVO_SWEEPING_OPEN;
+    lastServoStepTime = now;
+  }
   appendDeviceLog("INFO", "SERVO", "Start sweep " + String(currentServoAngle) + "->" + String(servoEndAngle) + " deg Heap=" + String(ESP.getFreeHeap()) + "B");
   Serial.printf_P(PSTR("[SERVO] Smooth soft-start: sweeping from %d deg to %d deg (Door Unlocking)\n"), currentServoAngle, servoEndAngle);
 }
@@ -2414,6 +2468,15 @@ void updateServo() {
   switch (servoState) {
     case SERVO_IDLE_DETACHED:
       // Motor detached - 0mA idle current draw
+      break;
+
+    case SERVO_PRE_ATTACH_DELAY:
+      // Wait for HTTP response / Wi-Fi TX burst to complete before drawing servo inrush current
+      if (now - servoPreAttachStartTime >= SERVO_PRE_ATTACH_MS) {
+        attachServoClean(currentServoAngle);
+        lastServoStepTime = now;
+        servoState = SERVO_SWEEPING_OPEN;
+      }
       break;
 
     case SERVO_SWEEPING_OPEN:
@@ -2433,13 +2496,13 @@ void updateServo() {
           servoState = SERVO_HOLDING_OPEN;
           servoHoldStartTime = now;
           appendDeviceLog("INFO", "SERVO", "Reached open (" + String(currentServoAngle) + " deg) in " + String(now - servoSweepStartMs) + "ms");
-          Serial.printf_P(PSTR("[SERVO] Full open reached (%d deg). Holding for %ds\n"), currentServoAngle, UNLOCK_HOLD_MS / 1000);
+          Serial.printf_P(PSTR("[SERVO] Full open reached (%d deg). Holding for %ds\n"), currentServoAngle, servoHoldSec);
         }
       }
       break;
 
     case SERVO_HOLDING_OPEN:
-      if (now - servoHoldStartTime >= UNLOCK_HOLD_MS) {
+      if (now - servoHoldStartTime >= ((unsigned long)servoHoldSec * 1000UL)) {
         servoState = SERVO_SWEEPING_CLOSE;
         servoUnlocked = false;
         lastServoStepTime = now;
@@ -2468,17 +2531,56 @@ void updateServo() {
       break;
 
     case SERVO_SETTLING_CLOSE:
-      // Allow 400ms for final mechanical gear train settling under load before cutting PWM
+      // Allow 400ms for final mechanical gear train settling under load before cutting PWM cleanly
       if (now - servoCloseSettleStartTime >= 400) {
-        lockServo.detach();
-        servoDetached = true;
+        detachServoClean();
+        lastServoDetachMs = now;
         servoState = SERVO_IDLE_DETACHED;
         setServoInFlight(false);
+        if (stressTestActive) {
+          if (stressTestDone >= stressTestTotal) {
+            stressTestActive = false;
+            appendDeviceLog("INFO", "STRESS", "Stress test PASS: " + String(stressTestDone) + "/" + String(stressTestTotal) + " racks completed (0 reboots) Heap=" + String(ESP.getFreeHeap()) + "B");
+            Serial.printf_P(PSTR("[STRESS] Completed %d/%d racks cleanly!\n"), stressTestDone, stressTestTotal);
+          } else {
+            stressTestNextMs = now + (unsigned long)stressTestGapSec * 1000UL;
+          }
+        }
         appendDeviceLog("INFO", "SERVO", "Cycle done & detached (" + String(now - servoSweepStartMs) + "ms) Heap=" + String(ESP.getFreeHeap()) + "B");
-        Serial.println(F("[SERVO] Motor detached at locked position (0mA idle current, brownout safe)"));
+        Serial.println(F("[SERVO] Motor detached & signal pulled LOW at locked position (0mA idle, no kickback)"));
       }
       break;
   }
+
+  // Autonomous Multi-Rack Stress Test Scheduler
+  if (stressTestActive && servoState == SERVO_IDLE_DETACHED && now >= stressTestNextMs) {
+    if (stressTestDone < stressTestTotal) {
+      stressTestDone++;
+      Serial.printf_P(PSTR("[STRESS] Triggering rack %d/%d...\n"), stressTestDone, stressTestTotal);
+      triggerServoDoorLock();
+    } else {
+      stressTestActive = false;
+    }
+  }
+}
+
+void handleServoStress() {
+  String action = server.arg("action");
+  if (action == "stop") {
+    stressTestActive = false;
+    appendDeviceLog("INFO", "STRESS", "Stress test stopped by user at " + String(stressTestDone) + "/" + String(stressTestTotal));
+    server.send(200, "application/json", "{\"status\":\"ok\",\"stress_active\":false,\"stress_done\":" + String(stressTestDone) + ",\"stress_total\":" + String(stressTestTotal) + "}");
+    return;
+  }
+  int cycles = server.hasArg("cycles") ? server.arg("cycles").toInt() : 10;
+  int gap = server.hasArg("gap") ? server.arg("gap").toInt() : 3;
+  stressTestTotal = constrain(cycles, 2, 30);
+  stressTestGapSec = constrain(gap, 2, 15);
+  stressTestDone = 0;
+  stressTestActive = true;
+  stressTestNextMs = millis() + 250; // Brief 250ms delay so HTTP response transmits first
+  appendDeviceLog("INFO", "STRESS", "Started " + String(stressTestTotal) + "-rack stress test (gap=" + String(stressTestGapSec) + "s)");
+  server.send(200, "application/json", "{\"status\":\"ok\",\"stress_active\":true,\"stress_done\":0,\"stress_total\":" + String(stressTestTotal) + ",\"gap\":" + String(stressTestGapSec) + "}");
 }
 
 void loadRackCounter() {
@@ -2945,13 +3047,12 @@ void setup() {
   // Load EEPROM credentials & saved servo angles before positioning servo
   loadCredentials();
   loadServoAngles();
+  loadServoHoldTime();
 
-  // 2. Initialize MG996R Servo on D8 (Set saved starting/locked angle gently then detach to eliminate power drain)
-  lockServo.attach(SERVO_PIN);
-  lockServo.write(servoStartAngle);
+  // 2. Initialize MG996R Servo on D8 (Set saved starting/locked angle gently then detach cleanly)
+  attachServoClean(servoStartAngle);
   delay(500);
-  lockServo.detach();
-  servoDetached = true;
+  detachServoClean();
   servoState = SERVO_IDLE_DETACHED;
   currentServoAngle = servoStartAngle;
   Serial.printf_P(PSTR("[SERVO] Initialized on Pin %s - Locked at %d deg (End=%d deg) & Detached (0mA idle current)\n"), "D8 (GPIO 15)", servoStartAngle, servoEndAngle);
@@ -2968,6 +3069,7 @@ void setup() {
   configTime(3600, 0, "pool.ntp.org", "time.google.com"); // UTC+1 (WAT / Africa/Lagos)
 
   WiFi.mode(WIFI_AP_STA);
+  WiFi.setOutputPower(15.0f); // Trim peak Wi-Fi TX current (~40% lower spikes, anti-brownout)
   WiFi.setSleepMode(WIFI_NONE_SLEEP); // Prevent modem sleep from dropping BearSSL TLS packets (HTTP -5)
   delay(100);
 
@@ -3150,6 +3252,14 @@ void setup() {
     if (!requireAuth()) return;
     handleServoConfig();
   });
+  server.on("/api/servo/stress", HTTP_POST, []() {
+    if (!requireAuth()) return;
+    handleServoStress();
+  });
+  server.on("/api/servo/stress", HTTP_GET, []() {
+    if (!requireAuth()) return;
+    handleServoStress();
+  });
   server.on("/api/logs", HTTP_GET, []() {
     if (!requireAuth()) return;
     handleDeviceLogs();
@@ -3226,8 +3336,8 @@ void loop() {
   updateWiFiReconnect();
 
   // Periodic heartbeat sync with Adrenaline Cloud (or batch flush if offline events were queued)
-  // Guarded by servoState == SERVO_IDLE_DETACHED to prevent simultaneous Servo PWM + TLS TX brownout
-  if (WiFi.status() == WL_CONNECTED && lastWiFiConnectedStatus && servoState == SERVO_IDLE_DETACHED) {
+  // Guarded by servoState == SERVO_IDLE_DETACHED + 800ms post-detach cap recharge window
+  if (WiFi.status() == WL_CONNECTED && lastWiFiConnectedStatus && servoState == SERVO_IDLE_DETACHED && (millis() - lastServoDetachMs >= SERVO_POST_DETACH_MS)) {
     if (offlineQueueCount > 0) {
       if (millis() - lastCloudSyncAttempt > 5000) {
         flushOfflineQueue();

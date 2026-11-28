@@ -1002,6 +1002,18 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
           <p class="hint">Range: 0&deg; to 180&deg; (default: 0&deg;)</p>
         </div>
 
+        <div class="form-group">
+          <label style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Gate Open Hold Time</span>
+            <span id="servo-hold-val" style="font-weight:600;color:var(--accent);">4s</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <input type="range" id="servo-hold-range" min="2" max="10" value="4" oninput="syncServoHold(this.value)" style="flex:1;min-width:140px;">
+            <input type="number" id="servo-hold-num" min="2" max="10" value="4" oninput="syncServoHold(this.value)" style="width:76px;text-align:center;">
+          </div>
+          <p class="hint">How long the ball gate stays open before closing (2s to 10s, default: 4s)</p>
+        </div>
+
         <div id="servo-config-feedback" style="display:none;padding:10px 12px;border-radius:var(--radius-md);margin-bottom:12px;font-size:0.82rem;"></div>
 
         <div class="btn-grid" style="margin-top:8px;">
@@ -1019,6 +1031,38 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
           <span>Invert Direction (Swap Start &amp; End)</span>
         </button>
         <p id="servo-saved-summary" class="hint" style="margin-top:10px;">Active EEPROM config: Start 180&deg; &rarr; End 0&deg; (Standard)</p>
+
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+            <span style="font-size:0.86rem;font-weight:600;color:var(--text-primary);display:inline-flex;align-items:center;gap:6px;">
+              <svg class="icon" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              <span>Multi-Rack Stress Test</span>
+            </span>
+            <span id="stress-status-badge" class="badge badge-idle">IDLE</span>
+          </div>
+          <p class="hint" style="margin-bottom:10px;">Runs repeated autonomous gate racks on the controller to verify zero brownouts or reboots under power-bank load.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+            <div>
+              <label for="stress-cycles" style="font-size:0.78rem;color:var(--text-secondary);display:block;margin-bottom:4px;">Rack Cycles (2-30)</label>
+              <input type="number" id="stress-cycles" min="2" max="30" value="10" style="width:100%;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:0.9rem;">
+            </div>
+            <div>
+              <label for="stress-gap" style="font-size:0.78rem;color:var(--text-secondary);display:block;margin-bottom:4px;">Gap Between Racks (s)</label>
+              <input type="number" id="stress-gap" min="2" max="15" value="3" style="width:100%;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);font-size:0.9rem;">
+            </div>
+          </div>
+          <div id="stress-feedback" style="display:none;padding:9px 12px;border-radius:var(--radius-md);margin-bottom:10px;font-size:0.82rem;"></div>
+          <div class="btn-grid">
+            <button type="button" class="btn btn-primary" id="btn-start-stress" onclick="startStressTest()">
+              <svg class="icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <span>Run Stress Test</span>
+            </button>
+            <button type="button" class="btn btn-secondary" id="btn-stop-stress" onclick="stopStressTest()">
+              <svg class="icon" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>
+              <span>Stop Test</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- WiFi & Admin Credentials Form -->
@@ -1108,6 +1152,39 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
         <div class="data-row"><span class="data-label">Free Heap RAM</span><span class="data-val" id="sys-heap">--</span></div>
         <div class="data-row"><span class="data-label">CPU Frequency</span><span class="data-val" id="sys-cpu">--</span></div>
         <div class="data-row"><span class="data-label">Chip ID</span><span class="data-val" id="sys-chip">--</span></div>
+      </div>
+
+      <!-- RGB LED Status Indicator Guide -->
+      <div class="card" id="card-rgb-guide">
+        <div class="card-title">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <span>RGB LED Status Guide</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid var(--card-border);margin-bottom:12px;">
+          <span id="led-live-dot" style="width:12px;height:12px;border-radius:50%;background:#10b981;box-shadow:0 0 10px #10b981;flex-shrink:0;"></span>
+          <div style="font-size:0.82rem;line-height:1.35;">
+            <span style="color:var(--text-sub);font-size:0.74rem;display:block;">Current LED Indicator</span>
+            <strong id="led-live-label" style="color:var(--text-main);">Green Heartbeat (Online &amp; Ready)</strong>
+          </div>
+        </div>
+        <div style="display:grid;gap:8px;font-size:0.8rem;">
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);">
+            <span style="width:11px;height:11px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;flex-shrink:0;"></span>
+            <div><strong>Green Pulse (every 2.5s)</strong> &mdash; <span style="color:var(--text-sub);">Online &amp; Ready for RFID card tap</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.32);">
+            <span style="width:11px;height:11px;border-radius:50%;background:#34d399;box-shadow:0 0 10px #34d399;flex-shrink:0;"></span>
+            <div><strong>Rapid Green Blink (5 Hz)</strong> &mdash; <span style="color:var(--text-sub);">Card Accepted / Ball Gate Open</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.25);">
+            <span style="width:11px;height:11px;border-radius:50%;background:#f59e0b;box-shadow:0 0 8px #f59e0b;flex-shrink:0;"></span>
+            <div><strong>Amber Pulse (Red + Green)</strong> &mdash; <span style="color:var(--text-sub);">Tap-to-Program Mode Armed (Present Staff Card)</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;background:rgba(248,81,73,0.10);border:1px solid rgba(248,81,73,0.25);">
+            <span style="width:11px;height:11px;border-radius:50%;background:#f85149;box-shadow:0 0 8px #f85149;flex-shrink:0;"></span>
+            <div><strong>Red Blink / Flash</strong> &mdash; <span style="color:var(--text-sub);">Offline / SoftAP Mode or Card Rejected</span></div>
+          </div>
+        </div>
       </div>
 
       <!-- Device Event Logs (Black Box) -->
@@ -1663,9 +1740,23 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       if (vEl) vEl.innerHTML = val + "&deg;";
     }
 
-    function formatServoSummary(startDeg, endDeg) {
+    function syncServoHold(rawVal) {
+      let val = parseInt(rawVal, 10);
+      if (isNaN(val)) val = 4;
+      if (val < 2) val = 2;
+      if (val > 10) val = 10;
+      const rEl = document.getElementById("servo-hold-range");
+      const nEl = document.getElementById("servo-hold-num");
+      const vEl = document.getElementById("servo-hold-val");
+      if (rEl) rEl.value = val;
+      if (nEl) nEl.value = val;
+      if (vEl) vEl.textContent = val + "s";
+    }
+
+    function formatServoSummary(startDeg, endDeg, holdSec) {
       const dirLabel = startDeg < endDeg ? "Inverted" : (startDeg > endDeg ? "Standard" : "Static");
-      return "Active EEPROM config: Start " + startDeg + "&deg; &rarr; End " + endDeg + "&deg; (" + dirLabel + ")";
+      const holdTxt = (typeof holdSec === "number" && holdSec >= 2) ? (" &bull; Hold " + holdSec + "s") : "";
+      return "Active EEPROM config: Start " + startDeg + "&deg; &rarr; End " + endDeg + "&deg; (" + dirLabel + ")" + holdTxt;
     }
 
     function invertServoAngles() {
@@ -1681,14 +1772,16 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
     function saveServoConfig(runTest) {
       const startVal = parseInt(document.getElementById("servo-start-num").value, 10);
       const endVal = parseInt(document.getElementById("servo-end-num").value, 10);
+      const holdEl = document.getElementById("servo-hold-num");
+      const holdVal = holdEl ? parseInt(holdEl.value, 10) : 4;
       const fb = document.getElementById("servo-config-feedback");
 
-      if (isNaN(startVal) || isNaN(endVal) || startVal < 0 || startVal > 180 || endVal < 0 || endVal > 180) {
+      if (isNaN(startVal) || isNaN(endVal) || startVal < 0 || startVal > 180 || endVal < 0 || endVal > 180 || isNaN(holdVal) || holdVal < 2 || holdVal > 10) {
         fb.style.display = "block";
         fb.style.background = "rgba(248, 81, 73, 0.15)";
         fb.style.color = "#f85149";
         fb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
-        fb.textContent = "Angles must be integers between 0 and 180.";
+        fb.textContent = "Angles must be 0–180 and hold time must be 2–10 seconds.";
         return;
       }
 
@@ -1696,11 +1789,12 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       fb.style.background = "rgba(56, 189, 248, 0.15)";
       fb.style.color = "#38bdf8";
       fb.style.border = "1px solid rgba(56, 189, 248, 0.3)";
-      fb.textContent = runTest ? "Saving angles & running sweep test..." : "Saving servo angles to EEPROM...";
+      fb.textContent = runTest ? "Saving config & running sweep test..." : "Saving servo config to EEPROM...";
 
       const params = new URLSearchParams();
       params.append("start", String(startVal));
       params.append("end", String(endVal));
+      params.append("hold", String(holdVal));
 
       fetch("/api/servo/config", {
         method: "POST",
@@ -1711,11 +1805,11 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
       .then(res => {
         if (res.status === "ok") {
           const sumEl = document.getElementById("servo-saved-summary");
-          if (sumEl) sumEl.innerHTML = formatServoSummary(res.servo_start_angle, res.servo_end_angle);
+          if (sumEl) sumEl.innerHTML = formatServoSummary(res.servo_start_angle, res.servo_end_angle, res.servo_hold_sec);
           fb.style.background = "rgba(16, 185, 129, 0.15)";
           fb.style.color = "#10b981";
           fb.style.border = "1px solid rgba(16, 185, 129, 0.3)";
-          fb.innerHTML = "Saved to memory! Start: <strong>" + res.servo_start_angle + "&deg;</strong>, End: <strong>" + res.servo_end_angle + "&deg;</strong>." + (runTest ? " Sweeping servo now..." : "");
+          fb.innerHTML = "Saved to memory! Start: <strong>" + res.servo_start_angle + "&deg;</strong>, End: <strong>" + res.servo_end_angle + "&deg;</strong>, Hold: <strong>" + (res.servo_hold_sec || holdVal) + "s</strong>." + (runTest ? " Sweeping servo now..." : "");
           if (runTest) {
             fetch("/api/servo/open", { method: "POST" }).catch(() => {});
           }
@@ -1732,6 +1826,61 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
         fb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
         fb.textContent = "Error saving servo angles: " + err.message;
       });
+    }
+
+    let stressStartBootCount = null;
+    let stressWasActive = false;
+
+    function startStressTest() {
+      const cyclesEl = document.getElementById("stress-cycles");
+      const gapEl = document.getElementById("stress-gap");
+      const fb = document.getElementById("stress-feedback");
+      const cycles = Math.max(2, Math.min(30, parseInt(cyclesEl ? cyclesEl.value : "10", 10) || 10));
+      const gap = Math.max(2, Math.min(15, parseInt(gapEl ? gapEl.value : "3", 10) || 3));
+      if (cyclesEl) cyclesEl.value = cycles;
+      if (gapEl) gapEl.value = gap;
+
+      fb.style.display = "block";
+      fb.style.background = "rgba(88, 166, 255, 0.12)";
+      fb.style.color = "#58a6ff";
+      fb.style.border = "1px solid rgba(88, 166, 255, 0.3)";
+      fb.textContent = "Starting " + cycles + "-rack stress test (gap " + gap + "s)...";
+
+      stressStartBootCount = null;
+      stressWasActive = true;
+      fetch("/api/servo/stress?action=start&cycles=" + cycles + "&gap=" + gap, { method: "POST" })
+        .then(r => r.json())
+        .then(res => {
+          if (res.status === "ok") {
+            fb.textContent = "Stress test running: 0 / " + res.stress_total + " racks. Monitoring for brownouts...";
+          } else {
+            fb.style.background = "rgba(248, 81, 73, 0.15)";
+            fb.style.color = "#f85149";
+            fb.textContent = res.message || "Failed to start stress test.";
+          }
+        })
+        .catch(err => {
+          fb.style.background = "rgba(248, 81, 73, 0.15)";
+          fb.style.color = "#f85149";
+          fb.textContent = "Error starting stress test: " + err.message;
+        });
+    }
+
+    function stopStressTest() {
+      const fb = document.getElementById("stress-feedback");
+      stressWasActive = false;
+      fetch("/api/servo/stress?action=stop", { method: "POST" })
+        .then(r => r.json())
+        .then(res => {
+          if (fb) {
+            fb.style.display = "block";
+            fb.style.background = "rgba(210, 153, 34, 0.15)";
+            fb.style.color = "#d29922";
+            fb.style.border = "1px solid rgba(210, 153, 34, 0.3)";
+            fb.textContent = "Stress test stopped at " + (res.stress_done || 0) + " / " + (res.stress_total || 0) + " racks.";
+          }
+        })
+        .catch(() => {});
     }
 
     function saveSettingsWithoutReboot() {
@@ -1932,13 +2081,59 @@ const char PROGMEM PAGE_DASHBOARD[] = R"rawliteral(
               servoEl.innerHTML = '<span class="badge badge-idle"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> LOCKED</span>';
             }
           }
+          const ledDot = document.getElementById("led-live-dot");
+          const ledLbl = document.getElementById("led-live-label");
+          if (ledDot && ledLbl) {
+            let c = "#f85149", txt = "Red Blink (Offline / SoftAP Mode)";
+            if (data.servo_state === "UNLOCKED") { c = "#34d399"; txt = "Rapid Green Blink (Ball Gate Open)"; }
+            else if (data.rfid_write_pending) { c = "#f59e0b"; txt = "Amber Pulse (Tap-to-Program Armed)"; }
+            else if (data.wifi_connected) { c = "#10b981"; txt = "Green Heartbeat (Online & Ready)"; }
+            ledDot.style.background = c;
+            ledDot.style.boxShadow = "0 0 10px " + c;
+            ledLbl.textContent = txt;
+          }
           if (typeof data.servo_start_angle === "number" && typeof data.servo_end_angle === "number") {
             const sumEl = document.getElementById("servo-saved-summary");
-            if (sumEl) sumEl.innerHTML = formatServoSummary(data.servo_start_angle, data.servo_end_angle);
+            if (sumEl) sumEl.innerHTML = formatServoSummary(data.servo_start_angle, data.servo_end_angle, data.servo_hold_sec);
             if (!servoConfigLoaded) {
               syncServoInput("start", data.servo_start_angle);
               syncServoInput("end", data.servo_end_angle);
+              if (typeof data.servo_hold_sec === "number") syncServoHold(data.servo_hold_sec);
               servoConfigLoaded = true;
+            }
+          }
+          if (typeof data.stress_active === "boolean") {
+            const sb = document.getElementById("stress-status-badge");
+            const sfb = document.getElementById("stress-feedback");
+            if (data.stress_active) {
+              if (stressStartBootCount === null && typeof data.boot_count === "number") stressStartBootCount = data.boot_count;
+              stressWasActive = true;
+              if (sb) { sb.className = "badge badge-warn"; sb.textContent = "RUNNING " + data.stress_done + "/" + data.stress_total; }
+              if (sfb) {
+                sfb.style.display = "block";
+                sfb.style.background = "rgba(88, 166, 255, 0.12)";
+                sfb.style.color = "#58a6ff";
+                sfb.style.border = "1px solid rgba(88, 166, 255, 0.3)";
+                sfb.innerHTML = "Running rack <strong>" + data.stress_done + " / " + data.stress_total + "</strong> | Boot #" + (data.boot_count || "-") + " | Heap: " + Math.round((data.free_heap || 0) / 1024) + " KB";
+              }
+            } else {
+              if (sb) { sb.className = "badge badge-idle"; sb.textContent = "IDLE"; }
+              if (stressWasActive && sfb) {
+                stressWasActive = false;
+                const rebooted = (stressStartBootCount !== null && typeof data.boot_count === "number" && data.boot_count > stressStartBootCount);
+                sfb.style.display = "block";
+                if (rebooted) {
+                  sfb.style.background = "rgba(248, 81, 73, 0.15)";
+                  sfb.style.color = "#f85149";
+                  sfb.style.border = "1px solid rgba(248, 81, 73, 0.3)";
+                  sfb.innerHTML = "<strong>BROWNOUT / REBOOT DETECTED!</strong> Boot jumped " + stressStartBootCount + " &rarr; " + data.boot_count + ". Check Device Event Log below.";
+                } else if (data.stress_total > 0 && data.stress_done >= data.stress_total) {
+                  sfb.style.background = "rgba(16, 185, 129, 0.15)";
+                  sfb.style.color = "#10b981";
+                  sfb.style.border = "1px solid rgba(16, 185, 129, 0.3)";
+                  sfb.innerHTML = "<strong>PASS:</strong> Completed " + data.stress_done + " / " + data.stress_total + " racks with 0 reboots (Boot #" + (data.boot_count || "-") + ").";
+                }
+              }
             }
           }
           if (typeof data.offline_queue_count === "number") {
