@@ -17,7 +17,7 @@
 #include <WiFiUdp.h>
 #include "web_pages.h"
 
-#define FIRMWARE_VERSION "Smarthive Pool V2.4-ESP32-Adrenaline"
+#define FIRMWARE_VERSION "Smarthive Pool V2.5-ESP32-Adrenaline"
 
 // ==================== FORWARD DECLARATIONS ====================
 uint32_t getChipId();
